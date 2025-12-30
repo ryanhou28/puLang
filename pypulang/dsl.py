@@ -1,0 +1,731 @@
+"""
+pyPuLang DSL - Python-embedded domain-specific language for music composition.
+
+This module provides the user-facing API for composing music:
+- piece() context manager
+- Roman numeral chord constants (I, II, III, IV, V, VI, VII)
+- Role enum (MELODY, BASS, HARMONY, RHYTHM)
+- Pattern singletons (root_quarters, etc.)
+- Builder pattern for sections and tracks
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from enum import Enum
+from fractions import Fraction
+from typing import TYPE_CHECKING, Any, Iterator, Union
+
+from pypulang.ir.intent import (
+    Chord,
+    ChordChange,
+    Harmony,
+    Key,
+    Pattern,
+    Piece,
+    Section,
+    TimeSignature,
+    Track,
+)
+from pypulang.midi import realize_to_midi, save_midi
+
+if TYPE_CHECKING:
+    import mido
+
+
+# -----------------------------------------------------------------------------
+# Role Enum
+# -----------------------------------------------------------------------------
+
+
+class Role(Enum):
+    """Musical roles for tracks."""
+
+    MELODY = "melody"
+    BASS = "bass"
+    HARMONY = "harmony"
+    RHYTHM = "rhythm"
+
+
+# -----------------------------------------------------------------------------
+# Roman Numeral Chords
+# -----------------------------------------------------------------------------
+
+
+class RomanNumeral:
+    """
+    A roman numeral chord that can be used in harmony() calls.
+
+    Supports method chaining for modifiers:
+        I, IV, V7, vi.dim(), V.inv(1)
+    """
+
+    def __init__(
+        self,
+        numeral: str,
+        quality: str = "major",
+        extensions: tuple[str, ...] = (),
+        inversion: int = 0,
+        altered_root: int = 0,
+        secondary: str | None = None,
+    ):
+        self._numeral = numeral
+        self._quality = quality
+        self._extensions = extensions
+        self._inversion = inversion
+        self._altered_root = altered_root
+        self._secondary = secondary
+
+    def to_chord(self) -> Chord:
+        """Convert to an IR Chord object."""
+        return Chord(
+            numeral=self._numeral,
+            quality=self._quality,
+            extensions=self._extensions,
+            inversion=self._inversion,
+            altered_root=self._altered_root,
+            secondary=self._secondary,
+        )
+
+    def _copy(self, **kwargs: Any) -> RomanNumeral:
+        """Create a copy with updated attributes."""
+        return RomanNumeral(
+            numeral=kwargs.get("numeral", self._numeral),
+            quality=kwargs.get("quality", self._quality),
+            extensions=kwargs.get("extensions", self._extensions),
+            inversion=kwargs.get("inversion", self._inversion),
+            altered_root=kwargs.get("altered_root", self._altered_root),
+            secondary=kwargs.get("secondary", self._secondary),
+        )
+
+    # Quality modifiers
+    def dim(self) -> RomanNumeral:
+        """Make diminished chord."""
+        return self._copy(quality="diminished")
+
+    def aug(self) -> RomanNumeral:
+        """Make augmented chord."""
+        return self._copy(quality="augmented")
+
+    def maj(self) -> RomanNumeral:
+        """Make major chord (explicit)."""
+        return self._copy(quality="major")
+
+    def min(self) -> RomanNumeral:
+        """Make minor chord (explicit)."""
+        return self._copy(quality="minor")
+
+    # Extension modifiers
+    def add7(self) -> RomanNumeral:
+        """Add dominant 7th."""
+        return self._copy(extensions=self._extensions + ("7",))
+
+    def maj7(self) -> RomanNumeral:
+        """Add major 7th."""
+        return self._copy(extensions=self._extensions + ("maj7",))
+
+    def min7(self) -> RomanNumeral:
+        """Add minor 7th."""
+        return self._copy(extensions=self._extensions + ("min7",))
+
+    def add9(self) -> RomanNumeral:
+        """Add 9th extension."""
+        return self._copy(extensions=self._extensions + ("add9",))
+
+    def add11(self) -> RomanNumeral:
+        """Add 11th extension."""
+        return self._copy(extensions=self._extensions + ("add11",))
+
+    def sus2(self) -> RomanNumeral:
+        """Suspended 2nd."""
+        return self._copy(extensions=self._extensions + ("sus2",))
+
+    def sus4(self) -> RomanNumeral:
+        """Suspended 4th."""
+        return self._copy(extensions=self._extensions + ("sus4",))
+
+    # Inversion
+    def inv(self, n: int) -> RomanNumeral:
+        """Set inversion (0=root, 1=first, 2=second, 3=third)."""
+        if n < 0 or n > 3:
+            raise ValueError(f"Inversion must be 0-3, got {n}")
+        return self._copy(inversion=n)
+
+    # Altered root
+    def flat(self) -> RomanNumeral:
+        """Flat the root (e.g., bVII)."""
+        return self._copy(altered_root=-1)
+
+    def sharp(self) -> RomanNumeral:
+        """Sharp the root (e.g., #IV)."""
+        return self._copy(altered_root=1)
+
+    # Secondary dominants
+    def of(self, target: RomanNumeral | str) -> RomanNumeral:
+        """
+        Create a secondary dominant.
+
+        Usage: V.of(V) for V/V, V.of(vi) for V/vi
+        """
+        if isinstance(target, RomanNumeral):
+            target_numeral = target._numeral
+        else:
+            target_numeral = target
+        return self._copy(secondary=target_numeral)
+
+    def __repr__(self) -> str:
+        parts = []
+        if self._altered_root == -1:
+            parts.append("b")
+        elif self._altered_root == 1:
+            parts.append("#")
+        parts.append(self._numeral)
+
+        if self._quality == "diminished":
+            parts.append("°")
+        elif self._quality == "augmented":
+            parts.append("+")
+
+        for ext in self._extensions:
+            parts.append(ext)
+
+        if self._secondary:
+            parts.append(f"/{self._secondary}")
+
+        if self._inversion:
+            parts.append(f"(inv{self._inversion})")
+
+        return "".join(parts)
+
+
+def _make_roman(numeral: str, quality: str) -> RomanNumeral:
+    """Create a RomanNumeral with the given numeral and quality."""
+    return RomanNumeral(numeral=numeral, quality=quality)
+
+
+# Major roman numerals
+I = _make_roman("I", "major")
+II = _make_roman("II", "major")
+III = _make_roman("III", "major")
+IV = _make_roman("IV", "major")
+V = _make_roman("V", "major")
+VI = _make_roman("VI", "major")
+VII = _make_roman("VII", "major")
+
+# Minor roman numerals (lowercase)
+i = _make_roman("i", "minor")
+ii = _make_roman("ii", "minor")
+iii = _make_roman("iii", "minor")
+iv = _make_roman("iv", "minor")
+v = _make_roman("v", "minor")
+vi = _make_roman("vi", "minor")
+vii = _make_roman("vii", "minor")
+
+# Common 7th chords as convenience
+I7 = I.add7()
+II7 = II.add7()
+III7 = III.add7()
+IV7 = IV.add7()
+V7 = V.add7()
+VI7 = VI.add7()
+VII7 = VII.add7()
+
+Imaj7 = I.maj7()
+IVmaj7 = IV.maj7()
+
+ii7 = ii.add7()
+iii7 = iii.add7()
+vi7 = vi.add7()
+vii7 = vii.add7()
+
+
+# -----------------------------------------------------------------------------
+# Pattern Singletons
+# -----------------------------------------------------------------------------
+
+
+class PatternBuilder:
+    """
+    A pattern singleton that can be used in track.pattern() calls.
+
+    Supports both direct use and builder-style configuration:
+        track.pattern(root_quarters)
+        track.pattern(arp("up"))
+        track.pattern(arp.up().rate(1/16))
+    """
+
+    def __init__(self, pattern_type: str, **default_params: Any):
+        self._pattern_type = pattern_type
+        self._params: dict[str, Any] = dict(default_params)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> PatternBuilder:
+        """Create a new PatternBuilder with parameters."""
+        new_params = dict(self._params)
+
+        # Handle positional args based on pattern type
+        if self._pattern_type == "arp" and args:
+            new_params["direction"] = args[0]
+        elif args:
+            # Generic first-positional handling
+            new_params["value"] = args[0]
+
+        new_params.update(kwargs)
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    def to_pattern(self) -> Pattern:
+        """Convert to an IR Pattern object."""
+        return Pattern(pattern_type=self._pattern_type, params=self._params)
+
+    # Common builder methods
+    def rate(self, value: float | Fraction) -> PatternBuilder:
+        """Set the rate (note subdivision)."""
+        new_params = dict(self._params)
+        new_params["rate"] = float(value) if isinstance(value, Fraction) else value
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    def velocity(self, value: int) -> PatternBuilder:
+        """Set velocity for the pattern."""
+        new_params = dict(self._params)
+        new_params["velocity"] = value
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    def octave(self, value: int) -> PatternBuilder:
+        """Set octave shift for the pattern."""
+        new_params = dict(self._params)
+        new_params["octave_shift"] = value
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    # Arp-specific builders
+    def up(self) -> PatternBuilder:
+        """Arpeggio direction: up."""
+        new_params = dict(self._params)
+        new_params["direction"] = "up"
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    def down(self) -> PatternBuilder:
+        """Arpeggio direction: down."""
+        new_params = dict(self._params)
+        new_params["direction"] = "down"
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    def updown(self) -> PatternBuilder:
+        """Arpeggio direction: up then down."""
+        new_params = dict(self._params)
+        new_params["direction"] = "updown"
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    def octaves(self, n: int) -> PatternBuilder:
+        """Set number of octaves for arpeggio."""
+        new_params = dict(self._params)
+        new_params["octaves"] = n
+        return PatternBuilder(self._pattern_type, **new_params)
+
+    def __repr__(self) -> str:
+        if self._params:
+            params_str = ", ".join(f"{k}={v!r}" for k, v in self._params.items())
+            return f"{self._pattern_type}({params_str})"
+        return self._pattern_type
+
+
+# Pattern singletons
+root_quarters = PatternBuilder("root_quarters")
+root_eighths = PatternBuilder("root_eighths")
+root_fifths = PatternBuilder("root_fifths")
+block_chords = PatternBuilder("block_chords")
+arp = PatternBuilder("arp", direction="up")
+
+
+# -----------------------------------------------------------------------------
+# Track Builder
+# -----------------------------------------------------------------------------
+
+
+class TrackBuilder:
+    """
+    Builder for creating tracks with method chaining.
+
+    Usage:
+        section.track("bass", role=Role.BASS).pattern(root_quarters).octave(-1)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        section: SectionBuilder,
+        role: Role = Role.HARMONY,
+        instrument: str | int = "piano",
+    ):
+        self._name = name
+        self._section = section
+        self._role = role
+        self._instrument = instrument
+        self._pattern: Pattern | None = None
+        self._octave_shift: int = 0
+        self._velocity: int = 100
+        self._muted: bool = False
+
+    def pattern(
+        self, pattern: PatternBuilder | str, **kwargs: Any
+    ) -> TrackBuilder:
+        """Set the pattern for this track."""
+        if isinstance(pattern, str):
+            self._pattern = Pattern(pattern_type=pattern, params=kwargs)
+        elif isinstance(pattern, PatternBuilder):
+            # Merge any additional kwargs
+            if kwargs:
+                pattern = pattern(**kwargs)
+            self._pattern = pattern.to_pattern()
+        else:
+            raise TypeError(f"Expected PatternBuilder or str, got {type(pattern)}")
+        return self
+
+    def octave(self, n: int) -> TrackBuilder:
+        """Set octave shift for this track."""
+        self._octave_shift = n
+        return self
+
+    def velocity(self, v: int) -> TrackBuilder:
+        """Set velocity for this track (0-127)."""
+        if not 0 <= v <= 127:
+            raise ValueError(f"Velocity must be 0-127, got {v}")
+        self._velocity = v
+        return self
+
+    def mute(self) -> TrackBuilder:
+        """Mute this track."""
+        self._muted = True
+        return self
+
+    def unmute(self) -> TrackBuilder:
+        """Unmute this track."""
+        self._muted = False
+        return self
+
+    def _to_ir(self) -> Track:
+        """Convert to IR Track object."""
+        return Track(
+            name=self._name,
+            role=self._role.value,
+            instrument=self._instrument,
+            content=self._pattern,
+            octave_shift=self._octave_shift,
+            velocity=self._velocity,
+            muted=self._muted,
+        )
+
+
+# -----------------------------------------------------------------------------
+# Section Builder
+# -----------------------------------------------------------------------------
+
+# Type for chord arguments in harmony()
+ChordArg = Union[RomanNumeral, tuple[RomanNumeral, int], tuple[RomanNumeral, float]]
+
+
+class SectionBuilder:
+    """
+    Builder for creating sections with method chaining.
+
+    Usage:
+        verse = p.section("verse", bars=8)
+        verse.harmony(I, IV, vi, V)
+        verse.track("bass", role=Role.BASS).pattern(root_quarters)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bars: int,
+        piece: PieceBuilder,
+        key: Key | None = None,
+        time_signature: TimeSignature | None = None,
+    ):
+        self._name = name
+        self._bars = bars
+        self._piece = piece
+        self._key = key
+        self._time_signature = time_signature
+        self._harmony: Harmony = Harmony()
+        self._tracks: list[TrackBuilder] = []
+
+    @property
+    def name(self) -> str:
+        """Get section name."""
+        return self._name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        """Set section name."""
+        self._name = value
+
+    def harmony(self, *chords: ChordArg) -> SectionBuilder:
+        """
+        Set the chord progression for this section.
+
+        Args:
+            *chords: Roman numerals, optionally with durations as tuples.
+                     Examples: I, IV, vi, V
+                              (I, 2), (IV, 1), (vi, 1), (V, 4)
+        """
+        changes = []
+
+        # Calculate default duration if no explicit durations given
+        has_explicit_durations = any(isinstance(c, tuple) for c in chords)
+
+        if has_explicit_durations:
+            for chord_arg in chords:
+                if isinstance(chord_arg, tuple):
+                    roman, duration = chord_arg
+                    changes.append(
+                        ChordChange(
+                            chord=roman.to_chord(),
+                            duration=Fraction(duration),
+                        )
+                    )
+                else:
+                    # Default duration of 1 bar
+                    changes.append(
+                        ChordChange(
+                            chord=chord_arg.to_chord(),
+                            duration=Fraction(1),
+                        )
+                    )
+        else:
+            # Equal duration: divide bars by number of chords
+            duration_per_chord = Fraction(self._bars, len(chords))
+            for chord_arg in chords:
+                changes.append(
+                    ChordChange(
+                        chord=chord_arg.to_chord(),
+                        duration=duration_per_chord,
+                    )
+                )
+
+        self._harmony = Harmony(changes=changes, duration_unit="bars")
+        return self
+
+    def progression(self, *chords: ChordArg) -> SectionBuilder:
+        """Alias for harmony()."""
+        return self.harmony(*chords)
+
+    def track(
+        self,
+        name: str,
+        role: Role = Role.HARMONY,
+        instrument: str | int = "piano",
+    ) -> TrackBuilder:
+        """
+        Create or access a track in this section.
+
+        Args:
+            name: Track identifier
+            role: Musical role (MELODY, BASS, HARMONY, RHYTHM)
+            instrument: MIDI instrument name or number
+        """
+        track = TrackBuilder(
+            name=name,
+            section=self,
+            role=role,
+            instrument=instrument,
+        )
+        self._tracks.append(track)
+        return track
+
+    def _to_ir(self) -> Section:
+        """Convert to IR Section object."""
+        return Section(
+            name=self._name,
+            bars=self._bars,
+            key=self._key,
+            time_signature=self._time_signature,
+            harmony=self._harmony,
+            tracks=[t._to_ir() for t in self._tracks],
+        )
+
+
+# -----------------------------------------------------------------------------
+# Piece Builder
+# -----------------------------------------------------------------------------
+
+
+class PieceBuilder:
+    """
+    Builder for creating pieces with method chaining.
+
+    Usage:
+        with piece(tempo=120, key="C major") as p:
+            verse = p.section("verse", bars=8)
+            ...
+        p.save_midi("output.mid")
+    """
+
+    def __init__(
+        self,
+        tempo: float = 120.0,
+        key: str | Key = "C major",
+        time_sig: str | TimeSignature = "4/4",
+        title: str | None = None,
+    ):
+        self._tempo = tempo
+
+        if isinstance(key, str):
+            self._key = Key.parse(key)
+        else:
+            self._key = key
+
+        if isinstance(time_sig, str):
+            self._time_signature = TimeSignature.parse(time_sig)
+        else:
+            self._time_signature = time_sig
+
+        self._title = title
+        self._sections: list[SectionBuilder] = []
+        self._form: list[str] | None = None
+
+    def section(
+        self,
+        name: str,
+        bars: int,
+        key: str | Key | None = None,
+        time_sig: str | TimeSignature | None = None,
+    ) -> SectionBuilder:
+        """
+        Create a section in this piece.
+
+        Args:
+            name: Section identifier (e.g., "verse", "chorus")
+            bars: Length in bars
+            key: Override key for this section (optional)
+            time_sig: Override time signature (optional)
+        """
+        section_key = None
+        if key is not None:
+            section_key = Key.parse(key) if isinstance(key, str) else key
+
+        section_time_sig = None
+        if time_sig is not None:
+            section_time_sig = (
+                TimeSignature.parse(time_sig)
+                if isinstance(time_sig, str)
+                else time_sig
+            )
+
+        section = SectionBuilder(
+            name=name,
+            bars=bars,
+            piece=self,
+            key=section_key,
+            time_signature=section_time_sig,
+        )
+        self._sections.append(section)
+        return section
+
+    def form(self, sections: list[SectionBuilder | str]) -> PieceBuilder:
+        """
+        Set the form (section order) for this piece.
+
+        Args:
+            sections: List of sections or section names in play order.
+        """
+        self._form = [
+            s._name if isinstance(s, SectionBuilder) else s for s in sections
+        ]
+        return self
+
+    def to_ir(self) -> Piece:
+        """Convert to an IR Piece object."""
+        return Piece(
+            title=self._title,
+            tempo=self._tempo,
+            key=self._key,
+            time_signature=self._time_signature,
+            sections=[s._to_ir() for s in self._sections],
+            form=self._form,
+        )
+
+    def to_midi(self, ticks_per_beat: int = 480) -> "mido.MidiFile":
+        """
+        Convert to a mido MidiFile object.
+
+        Args:
+            ticks_per_beat: MIDI ticks per beat (default 480)
+
+        Returns:
+            mido.MidiFile object that can be played or further processed.
+        """
+        ir = self.to_ir()
+        return realize_to_midi(ir, ticks_per_beat=ticks_per_beat)
+
+    def save_midi(self, path: str, ticks_per_beat: int = 480) -> None:
+        """
+        Save this piece to a MIDI file.
+
+        Args:
+            path: Output file path (e.g., "output.mid")
+            ticks_per_beat: MIDI ticks per beat (default 480)
+        """
+        ir = self.to_ir()
+        save_midi(ir, path, ticks_per_beat=ticks_per_beat)
+
+    def save(self, path: str, **kwargs: Any) -> None:
+        """
+        Save this piece to a file, auto-detecting format from extension.
+
+        Args:
+            path: Output file path. Extension determines format:
+                  - .mid, .midi → MIDI file
+                  - .xml (future) → MusicXML file
+            **kwargs: Format-specific options (e.g., ticks_per_beat for MIDI)
+        """
+        if path.endswith(".mid") or path.endswith(".midi"):
+            self.save_midi(path, **kwargs)
+        else:
+            raise ValueError(
+                f"Unknown file format: {path}. Supported: .mid, .midi"
+            )
+
+    def __enter__(self) -> PieceBuilder:
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit."""
+        pass
+
+
+# -----------------------------------------------------------------------------
+# piece() Function
+# -----------------------------------------------------------------------------
+
+
+def piece(
+    tempo: float = 120.0,
+    key: str | Key = "C major",
+    time_sig: str | TimeSignature = "4/4",
+    title: str | None = None,
+) -> PieceBuilder:
+    """
+    Create a new piece.
+
+    This is the main entry point for the pyPuLang DSL. Can be used as a
+    context manager or standalone.
+
+    Args:
+        tempo: BPM (default 120)
+        key: Key signature as string (e.g., "C major") or Key object
+        time_sig: Time signature as string (e.g., "4/4") or TimeSignature object
+        title: Optional piece title
+
+    Returns:
+        PieceBuilder that can be used to construct the piece.
+
+    Example:
+        with piece(tempo=100, key="C major") as p:
+            verse = p.section("verse", bars=4)
+            verse.harmony(I, IV, vi, V)
+            verse.track("bass", role=Role.BASS).pattern(root_quarters).octave(-1)
+
+        p.save_midi("output.mid")
+    """
+    return PieceBuilder(tempo=tempo, key=key, time_sig=time_sig, title=title)
