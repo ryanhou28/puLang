@@ -39,6 +39,7 @@ env/
 
 # Testing
 .pytest_cache/
+.hypothesis/
 .coverage
 htmlcov/
 .tox/
@@ -46,6 +47,9 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+
+# ruff
+.ruff_cache/
 
 # MIDI output files (test artifacts)
 *.mid

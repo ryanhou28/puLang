@@ -1,21 +1,21 @@
 """Tests for Intent IR dataclasses."""
 
-import json
-import pytest
 from fractions import Fraction
 
+import pytest
+
 from pypulang.ir.intent import (
-    Key,
-    TimeSignature,
     Chord,
     ChordChange,
     Harmony,
-    Pattern,
+    Key,
     Note,
     Notes,
-    Track,
-    Section,
+    Pattern,
     Piece,
+    Section,
+    TimeSignature,
+    Track,
 )
 
 
@@ -207,10 +207,12 @@ class TestNotes:
         assert rest.pitch == -1
 
     def test_notes_container(self):
-        notes = Notes(notes=[
-            Note(60, Fraction(1, 4)),
-            Note(62, Fraction(1, 4), offset=Fraction(1, 4)),
-        ])
+        notes = Notes(
+            notes=[
+                Note(60, Fraction(1, 4)),
+                Note(62, Fraction(1, 4), offset=Fraction(1, 4)),
+            ]
+        )
         assert len(notes.notes) == 2
 
     def test_notes_to_dict(self):
@@ -257,10 +259,12 @@ class TestSection:
         assert section.key is None  # Inherits from piece
 
     def test_section_with_harmony(self):
-        harmony = Harmony(changes=[
-            ChordChange(Chord("I", "major"), Fraction(2)),
-            ChordChange(Chord("IV", "major"), Fraction(2)),
-        ])
+        harmony = Harmony(
+            changes=[
+                ChordChange(Chord("I", "major"), Fraction(2)),
+                ChordChange(Chord("IV", "major"), Fraction(2)),
+            ]
+        )
         section = Section(name="verse", bars=4, harmony=harmony)
         assert len(section.harmony.changes) == 2
 
@@ -320,12 +324,14 @@ class TestPiece:
 
     def test_piece_roundtrip_json(self):
         # Create a complete piece
-        harmony = Harmony(changes=[
-            ChordChange(Chord("I", "major"), Fraction(2)),
-            ChordChange(Chord("IV", "major"), Fraction(2)),
-            ChordChange(Chord("vi", "minor"), Fraction(2)),
-            ChordChange(Chord("V", "major"), Fraction(2)),
-        ])
+        harmony = Harmony(
+            changes=[
+                ChordChange(Chord("I", "major"), Fraction(2)),
+                ChordChange(Chord("IV", "major"), Fraction(2)),
+                ChordChange(Chord("vi", "minor"), Fraction(2)),
+                ChordChange(Chord("V", "major"), Fraction(2)),
+            ]
+        )
         track = Track(
             name="bass",
             role="bass",

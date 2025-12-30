@@ -11,8 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import Any, Dict, List, Literal, Optional, Union
-
+from typing import Any, Literal, Union
 
 # -----------------------------------------------------------------------------
 # Key and Time Signature
@@ -34,17 +33,38 @@ class Key:
 
     def __post_init__(self) -> None:
         valid_roots = {
-            "C", "D", "E", "F", "G", "A", "B",
-            "C#", "D#", "F#", "G#", "A#",
-            "Db", "Eb", "Gb", "Ab", "Bb",
+            "C",
+            "D",
+            "E",
+            "F",
+            "G",
+            "A",
+            "B",
+            "C#",
+            "D#",
+            "F#",
+            "G#",
+            "A#",
+            "Db",
+            "Eb",
+            "Gb",
+            "Ab",
+            "Bb",
         }
         if self.root not in valid_roots:
             raise ValueError(f"Invalid key root: {self.root}")
 
         valid_modes = {
-            "major", "minor",
-            "dorian", "phrygian", "lydian", "mixolydian", "aeolian", "locrian",
-            "harmonic_minor", "melodic_minor",
+            "major",
+            "minor",
+            "dorian",
+            "phrygian",
+            "lydian",
+            "mixolydian",
+            "aeolian",
+            "locrian",
+            "harmonic_minor",
+            "melodic_minor",
         }
         if self.mode not in valid_modes:
             raise ValueError(f"Invalid mode: {self.mode}")
@@ -60,11 +80,11 @@ class Key:
         else:
             raise ValueError(f"Cannot parse key: {s}")
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         return {"root": self.root, "mode": self.mode}
 
     @classmethod
-    def from_dict(cls, d: Dict[str, str]) -> Key:
+    def from_dict(cls, d: dict[str, str]) -> Key:
         return cls(root=d["root"], mode=d["mode"])
 
 
@@ -100,11 +120,11 @@ class TimeSignature:
             raise ValueError(f"Cannot parse time signature: {s}")
         return cls(numerator=int(parts[0]), denominator=int(parts[1]))
 
-    def to_dict(self) -> Dict[str, int]:
+    def to_dict(self) -> dict[str, int]:
         return {"numerator": self.numerator, "denominator": self.denominator}
 
     @classmethod
-    def from_dict(cls, d: Dict[str, int]) -> TimeSignature:
+    def from_dict(cls, d: dict[str, int]) -> TimeSignature:
         return cls(numerator=d["numerator"], denominator=d["denominator"])
 
 
@@ -132,11 +152,25 @@ class Chord:
     extensions: tuple[str, ...] = ()
     inversion: int = 0
     altered_root: int = 0
-    secondary: Optional[str] = None
+    secondary: str | None = None
 
     def __post_init__(self) -> None:
-        valid_numerals = {"I", "II", "III", "IV", "V", "VI", "VII",
-                         "i", "ii", "iii", "iv", "v", "vi", "vii"}
+        valid_numerals = {
+            "I",
+            "II",
+            "III",
+            "IV",
+            "V",
+            "VI",
+            "VII",
+            "i",
+            "ii",
+            "iii",
+            "iv",
+            "v",
+            "vi",
+            "vii",
+        }
         if self.numeral not in valid_numerals:
             raise ValueError(f"Invalid numeral: {self.numeral}")
 
@@ -148,8 +182,20 @@ class Chord:
     def degree(self) -> int:
         """Return scale degree (1-7)."""
         numeral_map = {
-            "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7,
-            "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7,
+            "I": 1,
+            "II": 2,
+            "III": 3,
+            "IV": 4,
+            "V": 5,
+            "VI": 6,
+            "VII": 7,
+            "i": 1,
+            "ii": 2,
+            "iii": 3,
+            "iv": 4,
+            "v": 5,
+            "vi": 6,
+            "vii": 7,
         }
         return numeral_map[self.numeral]
 
@@ -158,7 +204,7 @@ class Chord:
         """True if the numeral is uppercase (typically major)."""
         return self.numeral.isupper()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "numeral": self.numeral,
             "quality": self.quality,
@@ -169,7 +215,7 @@ class Chord:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Chord:
+    def from_dict(cls, d: dict[str, Any]) -> Chord:
         return cls(
             numeral=d["numeral"],
             quality=d["quality"],
@@ -193,14 +239,14 @@ class ChordChange:
     chord: Chord
     duration: Fraction
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "chord": self.chord.to_dict(),
             "duration": str(self.duration),
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> ChordChange:
+    def from_dict(cls, d: dict[str, Any]) -> ChordChange:
         return cls(
             chord=Chord.from_dict(d["chord"]),
             duration=Fraction(d["duration"]),
@@ -217,14 +263,14 @@ class Harmony:
         duration_unit: "bars" or "beats"
     """
 
-    changes: List[ChordChange] = field(default_factory=list)
+    changes: list[ChordChange] = field(default_factory=list)
     duration_unit: Literal["bars", "beats"] = "bars"
 
     def total_duration(self) -> Fraction:
         """Total duration of all chord changes."""
         return sum((c.duration for c in self.changes), Fraction(0))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "harmony",
             "duration_unit": self.duration_unit,
@@ -232,7 +278,7 @@ class Harmony:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Harmony:
+    def from_dict(cls, d: dict[str, Any]) -> Harmony:
         return cls(
             changes=[ChordChange.from_dict(c) for c in d["changes"]],
             duration_unit=d.get("duration_unit", "bars"),
@@ -255,9 +301,9 @@ class Pattern:
     """
 
     pattern_type: str
-    params: Dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "pattern",
             "pattern_type": self.pattern_type,
@@ -265,7 +311,7 @@ class Pattern:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Pattern:
+    def from_dict(cls, d: dict[str, Any]) -> Pattern:
         return cls(
             pattern_type=d["pattern_type"],
             params=d.get("params", {}),
@@ -286,10 +332,10 @@ class Note:
 
     pitch: int
     duration: Fraction
-    velocity: Optional[int] = None
+    velocity: int | None = None
     offset: Fraction = field(default_factory=lambda: Fraction(0))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "pitch": self.pitch,
             "duration": str(self.duration),
@@ -298,7 +344,7 @@ class Note:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Note:
+    def from_dict(cls, d: dict[str, Any]) -> Note:
         return cls(
             pitch=d["pitch"],
             duration=Fraction(d["duration"]),
@@ -316,16 +362,16 @@ class Notes:
         notes: List of Note objects
     """
 
-    notes: List[Note] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "notes",
             "notes": [n.to_dict() for n in self.notes],
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Notes:
+    def from_dict(cls, d: dict[str, Any]) -> Notes:
         return cls(notes=[Note.from_dict(n) for n in d["notes"]])
 
 
@@ -355,8 +401,8 @@ class Track:
 
     name: str
     role: str = "harmony"
-    instrument: Union[str, int] = "piano"
-    content: Optional[TrackContent] = None
+    instrument: str | int = "piano"
+    content: TrackContent | None = None
     octave_shift: int = 0
     velocity: int = 100
     muted: bool = False
@@ -366,7 +412,7 @@ class Track:
         if self.role not in valid_roles:
             raise ValueError(f"Invalid role: {self.role}")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         content_dict = self.content.to_dict() if self.content else None
         return {
             "type": "track",
@@ -380,7 +426,7 @@ class Track:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Track:
+    def from_dict(cls, d: dict[str, Any]) -> Track:
         content = None
         if d.get("content"):
             content_data = d["content"]
@@ -420,12 +466,12 @@ class Section:
 
     name: str
     bars: int
-    key: Optional[Key] = None
-    time_signature: Optional[TimeSignature] = None
+    key: Key | None = None
+    time_signature: TimeSignature | None = None
     harmony: Harmony = field(default_factory=Harmony)
-    tracks: List[Track] = field(default_factory=list)
+    tracks: list[Track] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "section",
             "name": self.name,
@@ -437,12 +483,14 @@ class Section:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Section:
+    def from_dict(cls, d: dict[str, Any]) -> Section:
         return cls(
             name=d["name"],
             bars=d["bars"],
             key=Key.from_dict(d["key"]) if d.get("key") else None,
-            time_signature=TimeSignature.from_dict(d["time_signature"]) if d.get("time_signature") else None,
+            time_signature=TimeSignature.from_dict(d["time_signature"])
+            if d.get("time_signature")
+            else None,
             harmony=Harmony.from_dict(d["harmony"]) if d.get("harmony") else Harmony(),
             tracks=[Track.from_dict(t) for t in d.get("tracks", [])],
         )
@@ -470,11 +518,11 @@ class Piece:
     tempo: float = 120.0
     key: Key = field(default_factory=lambda: Key("C", "major"))
     time_signature: TimeSignature = field(default_factory=lambda: TimeSignature(4, 4))
-    sections: List[Section] = field(default_factory=list)
-    title: Optional[str] = None
-    form: Optional[List[str]] = None
+    sections: list[Section] = field(default_factory=list)
+    title: str | None = None
+    form: list[str] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "piece",
             "title": self.title,
@@ -486,12 +534,14 @@ class Piece:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> Piece:
+    def from_dict(cls, d: dict[str, Any]) -> Piece:
         return cls(
             title=d.get("title"),
             tempo=d.get("tempo", 120.0),
             key=Key.from_dict(d["key"]) if d.get("key") else Key("C", "major"),
-            time_signature=TimeSignature.from_dict(d["time_signature"]) if d.get("time_signature") else TimeSignature(4, 4),
+            time_signature=TimeSignature.from_dict(d["time_signature"])
+            if d.get("time_signature")
+            else TimeSignature(4, 4),
             sections=[Section.from_dict(s) for s in d.get("sections", [])],
             form=d.get("form"),
         )
@@ -499,10 +549,12 @@ class Piece:
     def to_json(self) -> str:
         """Serialize to JSON string."""
         import json
+
         return json.dumps(self.to_dict(), indent=2)
 
     @classmethod
     def from_json(cls, s: str) -> Piece:
         """Deserialize from JSON string."""
         import json
+
         return cls.from_dict(json.loads(s))
