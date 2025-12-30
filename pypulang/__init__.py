@@ -21,6 +21,12 @@ from pypulang.ir.intent import (
     Track,
 )
 
+# MIDI emission
+from pypulang.midi import (
+    realize_to_midi,
+    save_midi,
+)
+
 # Pattern generators
 from pypulang.patterns import (
     PATTERN_REGISTRY,
@@ -70,4 +76,7 @@ __all__ = [
     "generate_pattern",
     "get_pattern",
     "register_pattern",
+    # MIDI emission
+    "realize_to_midi",
+    "save_midi",
 ]
