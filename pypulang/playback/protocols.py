@@ -47,6 +47,14 @@ class PlaybackHandle(Protocol):
         """Block until playback completes or is stopped."""
         ...
 
+    def get_position_seconds(self) -> float:
+        """Get current playback position in seconds (optional)."""
+        ...
+
+    def get_position_beats(self, tempo: float) -> float:
+        """Get current playback position in beats (optional)."""
+        ...
+
 
 @runtime_checkable
 class PlaybackBackend(Protocol):
@@ -130,6 +138,31 @@ class BasePlaybackHandle(ABC):
     def wait(self) -> None:
         """Block until playback completes or is stopped."""
         ...
+
+    def get_position_seconds(self) -> float:
+        """
+        Get current playback position in seconds.
+
+        Default implementation returns 0.0. Subclasses should override
+        for accurate position tracking.
+        """
+        return 0.0
+
+    def get_position_beats(self, tempo: float) -> float:
+        """
+        Get current playback position in beats.
+
+        Args:
+            tempo: Tempo in BPM (needed to convert from seconds)
+
+        Returns:
+            Current position in beats
+
+        Default implementation converts from seconds. Subclasses can override.
+        """
+        seconds = self.get_position_seconds()
+        beats_per_second = tempo / 60.0
+        return seconds * beats_per_second
 
 
 class BasePlaybackBackend(ABC):

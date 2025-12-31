@@ -289,6 +289,30 @@ def example_from_bar():
 
 
 # =============================================================================
+# Example 9: Hot Reload (Live Coding)
+# =============================================================================
+
+def example_hot_reload():
+    """
+    Enable hot reload for live coding.
+
+    This watches the source file and automatically reloads when you save.
+    Great for rapid iteration and live performance.
+
+    Note: This example is best run from its own file. See examples/hot_reload.py
+    for a standalone hot reload demo.
+    """
+    print("\nExample 9: Hot Reload")
+    print("-" * 40)
+    print("Hot reload watches your source file and restarts playback on save.")
+    print("For the best experience, run examples/hot_reload.py directly:")
+    print()
+    print("    python examples/hot_reload.py")
+    print()
+    print("Then edit the file and save to hear your changes!")
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -308,7 +332,9 @@ if __name__ == "__main__":
     # example_synth_presets()
     # example_virtual_midi()
     # example_from_bar()
+    # example_hot_reload()
 
     print("\n" + "=" * 60)
     print("To run other examples, uncomment them in the main block.")
+    print("For hot reload, run: python examples/hot_reload.py")
     print("=" * 60)

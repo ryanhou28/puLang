@@ -34,6 +34,7 @@ from pypulang.playback.config import (
 )
 from pypulang.playback.instruments import Instrument, InstrumentBank, Synth
 from pypulang.playback.protocols import PlaybackBackend, PlaybackHandle
+from pypulang.playback.watcher import FileWatcher, WatchHandle, watch_piece
 
 
 # Lazy imports for optional backends
@@ -77,4 +78,8 @@ __all__ = [
     "get_default_backend",
     "set_default_backend",
     "get_available_backends",
+    # Hot reload
+    "FileWatcher",
+    "WatchHandle",
+    "watch_piece",
 ]

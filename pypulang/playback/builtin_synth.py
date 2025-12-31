@@ -140,6 +140,25 @@ class BuiltinSynthHandle(BasePlaybackHandle):
         """Block until playback completes or is stopped."""
         self._complete_event.wait()
 
+    def get_position_seconds(self) -> float:
+        """Get current playback position in seconds."""
+        with self._lock:
+            return self._position / self._sample_rate
+
+    def get_position_beats(self, tempo: float) -> float:
+        """
+        Get current playback position in beats.
+
+        Args:
+            tempo: Tempo in BPM (needed to convert from seconds)
+
+        Returns:
+            Current position in beats
+        """
+        seconds = self.get_position_seconds()
+        beats_per_second = tempo / 60.0
+        return seconds * beats_per_second
+
 
 class BuiltinSynth(BasePlaybackBackend):
     """

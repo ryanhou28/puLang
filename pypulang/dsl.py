@@ -924,6 +924,63 @@ class PieceBuilder:
         midi_backend = VirtualMidi()
         return midi_backend.list_ports()
 
+    def watch(
+        self,
+        source_file: str | None = None,
+        backend: "PlaybackBackend | None" = None,
+        instruments: "InstrumentBank | None" = None,
+        loop: bool = True,
+        from_bar: int | None = None,
+        section: str | None = None,
+    ) -> None:
+        """
+        Enable hot reload mode - watch source file and restart playback on save.
+
+        This method blocks until interrupted (Ctrl+C). On each file save:
+        1. Stops current playback
+        2. Reloads the source module
+        3. Restarts playback (best effort position preservation)
+
+        Args:
+            source_file: Path to watch (auto-detected from call stack if None)
+            backend: Playback backend to use (default: auto-detect)
+            instruments: InstrumentBank for custom instrument sounds
+            loop: Whether to loop playback (default True for iteration)
+            from_bar: Start from a specific bar
+            section: Play only a specific section
+
+        Example:
+            from pypulang import piece, I, IV, vi, V, Role, root_quarters
+
+            with piece(tempo=120, key="C major") as p:
+                verse = p.section("verse", bars=4)
+                verse.harmony(I, IV, vi, V)
+                verse.track("bass", role=Role.BASS).pattern(root_quarters)
+
+            # Watch for changes and auto-reload
+            p.watch()  # Loops playback, reloads on save
+        """
+        from pypulang.playback.watcher import watch_piece
+
+        handle = watch_piece(
+            piece_builder=self,
+            source_file=source_file,
+            backend=backend,
+            instruments=instruments,
+            loop=loop,
+            from_bar=from_bar,
+            section=section,
+        )
+
+        # Block until interrupted
+        try:
+            while handle.is_watching():
+                import time
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\n[watch] Stopping...")
+            handle.stop()
+
     def __enter__(self) -> PieceBuilder:
         """Context manager entry."""
         return self

@@ -415,6 +415,8 @@ class TestProtocolCompliance:
         assert hasattr(PlaybackHandle, 'is_playing')
         assert hasattr(PlaybackHandle, 'is_paused')
         assert hasattr(PlaybackHandle, 'wait')
+        assert hasattr(PlaybackHandle, 'get_position_seconds')
+        assert hasattr(PlaybackHandle, 'get_position_beats')
 
     def test_playback_backend_protocol(self):
         """Test that PlaybackBackend is a proper protocol."""
@@ -424,3 +426,182 @@ class TestProtocolCompliance:
         assert hasattr(PlaybackBackend, 'play')
         assert hasattr(PlaybackBackend, 'is_available')
         assert hasattr(PlaybackBackend, 'name')
+
+
+# =============================================================================
+# Hot Reload Tests
+# =============================================================================
+
+
+class TestFileWatcher:
+    """Tests for FileWatcher class."""
+
+    def test_file_watcher_creation(self, tmp_path):
+        """Test creating a file watcher."""
+        from pypulang.playback.watcher import FileWatcher
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# test")
+
+        callback_called = []
+        def callback():
+            callback_called.append(True)
+
+        watcher = FileWatcher(test_file, callback, poll_interval=0.1)
+        assert watcher._file_path == test_file.resolve()
+
+    def test_file_watcher_detects_change(self, tmp_path):
+        """Test that watcher detects file changes."""
+        import time
+        from pypulang.playback.watcher import FileWatcher
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# version 1")
+
+        callback_called = []
+        def callback():
+            callback_called.append(True)
+
+        watcher = FileWatcher(test_file, callback, poll_interval=0.1)
+        watcher.start()
+
+        try:
+            # Modify the file
+            time.sleep(0.2)
+            test_file.write_text("# version 2")
+            time.sleep(0.3)
+
+            # Callback should have been called
+            assert len(callback_called) >= 1
+        finally:
+            watcher.stop()
+
+    def test_file_watcher_stop(self, tmp_path):
+        """Test stopping the watcher."""
+        from pypulang.playback.watcher import FileWatcher
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# test")
+
+        watcher = FileWatcher(test_file, lambda: None, poll_interval=0.1)
+        watcher.start()
+        watcher.stop()
+
+        assert not watcher._running
+
+
+class TestWatchHandle:
+    """Tests for WatchHandle class."""
+
+    def test_watch_handle_creation(self, tmp_path):
+        """Test creating a watch handle."""
+        from pypulang.playback.watcher import FileWatcher, WatchHandle
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# test")
+
+        watcher = FileWatcher(test_file, lambda: None)
+        handle = WatchHandle(watcher, None, test_file)
+
+        assert handle.file_path == test_file
+        assert handle.is_watching()
+
+    def test_watch_handle_stop(self, tmp_path):
+        """Test stopping a watch handle."""
+        from pypulang.playback.watcher import FileWatcher, WatchHandle
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# test")
+
+        watcher = FileWatcher(test_file, lambda: None)
+        watcher.start()
+
+        handle = WatchHandle(watcher, None, test_file)
+        handle.stop()
+
+        assert not handle.is_watching()
+        assert not watcher._running
+
+
+class TestGetCallerFile:
+    """Tests for get_caller_file function."""
+
+    def test_get_caller_file(self):
+        """Test getting caller file from test module."""
+        from pypulang.playback.watcher import get_caller_file
+
+        # When called from a test, should return the test file path
+        caller_file = get_caller_file()
+        assert caller_file is not None
+        assert caller_file.suffix == ".py"
+
+
+class TestHotReloadDSL:
+    """Tests for hot reload integration with DSL."""
+
+    def test_piece_has_watch_method(self):
+        """Test that PieceBuilder has watch method."""
+        with piece(tempo=120, key="C major") as p:
+            pass
+
+        assert hasattr(p, 'watch')
+        assert callable(p.watch)
+
+    def test_watch_piece_function_exists(self):
+        """Test that watch_piece function is exported."""
+        from pypulang.playback import watch_piece
+
+        assert callable(watch_piece)
+
+    def test_file_watcher_exported(self):
+        """Test that FileWatcher is exported."""
+        from pypulang.playback import FileWatcher
+
+        assert FileWatcher is not None
+
+    def test_watch_handle_exported(self):
+        """Test that WatchHandle is exported."""
+        from pypulang.playback import WatchHandle
+
+        assert WatchHandle is not None
+
+
+class TestPositionTracking:
+    """Tests for playback position tracking."""
+
+    def test_base_handle_position_defaults(self):
+        """Test that BasePlaybackHandle has default position methods."""
+        from pypulang.playback.protocols import BasePlaybackHandle
+
+        assert hasattr(BasePlaybackHandle, 'get_position_seconds')
+        assert hasattr(BasePlaybackHandle, 'get_position_beats')
+
+    @pytest.fixture
+    def numpy_available(self):
+        """Check if numpy is available."""
+        try:
+            import numpy
+            return True
+        except ImportError:
+            pytest.skip("numpy not installed")
+
+    def test_builtin_synth_handle_position(self, numpy_available):
+        """Test BuiltinSynthHandle position tracking."""
+        import numpy as np
+        from pypulang.playback.builtin_synth import BuiltinSynthHandle, SOUNDDEVICE_AVAILABLE
+
+        if not SOUNDDEVICE_AVAILABLE:
+            pytest.skip("sounddevice not installed")
+
+        # Create a handle with some audio data
+        audio = np.zeros(44100, dtype=np.float32)  # 1 second at 44100 Hz
+        handle = BuiltinSynthHandle(audio, sample_rate=44100)
+
+        # Position should start at 0
+        assert handle.get_position_seconds() == 0.0
+        assert handle.get_position_beats(120) == 0.0
+
+        # Simulate some playback progress
+        handle._position = 22050  # Half a second
+        assert handle.get_position_seconds() == 0.5
+        assert handle.get_position_beats(120) == 1.0  # 120 BPM = 2 beats/sec
