@@ -1,7 +1,7 @@
 """
 pypulang - Python-embedded DSL for puLang music composition.
 
-Phase 1: Minimal Playable Prototype
+Phase 2: Patterns, Escape Hatch, and Live Playback
 
 Usage:
     from pypulang import *
@@ -12,6 +12,22 @@ Usage:
         verse.track("bass", role=Role.BASS).pattern(root_quarters).octave(-1)
 
     p.save_midi("output.mid")
+
+Escape Hatch (Literal Notes):
+    from pypulang import *
+    from pypulang.pitches import *
+
+    with piece(tempo=120, key="G major") as p:
+        verse = p.section("verse", bars=8)
+        verse.harmony(I, vi, IV, V)
+        verse.track("melody").notes([
+            (D5, 1/4), (E5, 1/4), (G5, 1/2),
+            (A5, 1/4), (G5, 1/4), (E5, 1/2),
+            rest(1/4),
+            chord([C5, E5, G5], 1/2),
+        ])
+
+    p.save_midi("song.mid")
 """
 
 __version__ = "0.1.0"
@@ -109,6 +125,19 @@ from pypulang.dsl import (
     RomanNumeral,
 )
 
+# Pitch utilities (escape hatch for literal notes)
+from pypulang.pitches import (
+    # Core class
+    Pitch,
+    # Note specification functions
+    note,
+    rest,
+    chord,
+    NoteSpec,
+    ChordSpec,
+    REST,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -157,6 +186,14 @@ __all__ = [
     "TrackBuilder",
     "PatternBuilder",
     "RomanNumeral",
+    # Pitch utilities (escape hatch)
+    "Pitch",
+    "note",
+    "rest",
+    "chord",
+    "NoteSpec",
+    "ChordSpec",
+    "REST",
     # IR types (advanced)
     "Key",
     "TimeSignature",

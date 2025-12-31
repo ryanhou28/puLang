@@ -22,11 +22,14 @@ from pypulang.ir.intent import (
     ChordChange,
     Harmony,
     Key,
+    Note,
+    Notes,
     Pattern,
     Piece,
     Section,
     TimeSignature,
     Track,
+    TrackContent,
 )
 from pypulang.midi import realize_to_midi, save_midi
 
@@ -347,6 +350,7 @@ class TrackBuilder:
 
     Usage:
         section.track("bass", role=Role.BASS).pattern(root_quarters).octave(-1)
+        section.track("melody").notes([(C4, 1/4), (E4, 1/4), rest(1/4), (G4, 1/4)])
     """
 
     def __init__(
@@ -360,7 +364,7 @@ class TrackBuilder:
         self._section = section
         self._role = role
         self._instrument = instrument
-        self._pattern: Pattern | None = None
+        self._content: TrackContent | None = None
         self._octave_shift: int = 0
         self._velocity: int = 100
         self._muted: bool = False
@@ -370,14 +374,94 @@ class TrackBuilder:
     ) -> TrackBuilder:
         """Set the pattern for this track."""
         if isinstance(pattern, str):
-            self._pattern = Pattern(pattern_type=pattern, params=kwargs)
+            self._content = Pattern(pattern_type=pattern, params=kwargs)
         elif isinstance(pattern, PatternBuilder):
             # Merge any additional kwargs
             if kwargs:
                 pattern = pattern(**kwargs)
-            self._pattern = pattern.to_pattern()
+            self._content = pattern.to_pattern()
         else:
             raise TypeError(f"Expected PatternBuilder or str, got {type(pattern)}")
+        return self
+
+    def notes(self, note_list: list[Any]) -> TrackBuilder:
+        """
+        Set literal notes for this track (escape hatch from patterns).
+
+        Args:
+            note_list: List of notes. Each item can be:
+                - (pitch, duration) tuple: e.g., (C4, 1/4)
+                - (pitch, duration, velocity) tuple: e.g., (C4, 1/4, 100)
+                - NoteSpec from note() function: e.g., note(C4, 1/4, velocity=100)
+                - ChordSpec from chord() function: e.g., chord([C4, E4, G4], 1/2)
+                - Rest from rest() function: e.g., rest(1/4)
+
+        Returns:
+            self for method chaining
+
+        Example:
+            from pypulang.pitches import *
+
+            track.notes([
+                (D5, 1/4), (E5, 1/4), (G5, 1/2),
+                rest(1/4),
+                note(A5, 1/4, velocity=100),
+                chord([C5, E5, G5], 1/2),
+            ])
+        """
+        # Import here to avoid circular imports
+        from pypulang.pitches import ChordSpec, NoteSpec
+
+        ir_notes: list[Note] = []
+        current_offset = Fraction(0)
+
+        for item in note_list:
+            if isinstance(item, NoteSpec):
+                # NoteSpec from note() or rest()
+                ir_notes.append(Note(
+                    pitch=item.pitch,
+                    duration=item.duration,
+                    velocity=item.velocity,
+                    offset=current_offset,
+                ))
+                current_offset += item.duration
+
+            elif isinstance(item, ChordSpec):
+                # ChordSpec from chord() - multiple simultaneous notes
+                for pitch in item.pitches:
+                    ir_notes.append(Note(
+                        pitch=pitch,
+                        duration=item.duration,
+                        velocity=item.velocity,
+                        offset=current_offset,
+                    ))
+                current_offset += item.duration
+
+            elif isinstance(item, tuple):
+                # Tuple syntax: (pitch, duration) or (pitch, duration, velocity)
+                if len(item) == 2:
+                    pitch, duration = item
+                    velocity = None
+                elif len(item) == 3:
+                    pitch, duration, velocity = item
+                else:
+                    raise ValueError(f"Invalid note tuple: {item}. Expected 2 or 3 elements.")
+
+                ir_notes.append(Note(
+                    pitch=int(pitch),
+                    duration=Fraction(duration) if not isinstance(duration, Fraction) else duration,
+                    velocity=velocity,
+                    offset=current_offset,
+                ))
+                current_offset += Fraction(duration) if not isinstance(duration, Fraction) else duration
+
+            else:
+                raise TypeError(
+                    f"Invalid note type: {type(item)}. "
+                    "Expected tuple, NoteSpec, or ChordSpec."
+                )
+
+        self._content = Notes(notes=ir_notes)
         return self
 
     def octave(self, n: int) -> TrackBuilder:
@@ -408,7 +492,7 @@ class TrackBuilder:
             name=self._name,
             role=self._role.value,
             instrument=self._instrument,
-            content=self._pattern,
+            content=self._content,
             octave_shift=self._octave_shift,
             velocity=self._velocity,
             muted=self._muted,
