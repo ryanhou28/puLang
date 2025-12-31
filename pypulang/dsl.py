@@ -31,10 +31,12 @@ from pypulang.ir.intent import (
     Track,
     TrackContent,
 )
-from pypulang.midi import realize_to_midi, save_midi
+from pypulang.midi import realize_to_midi, realize_to_events, save_midi
 
 if TYPE_CHECKING:
     import mido
+    from pypulang.playback.protocols import PlaybackBackend, PlaybackHandle
+    from pypulang.playback.instruments import InstrumentBank
 
 
 # -----------------------------------------------------------------------------
@@ -769,6 +771,159 @@ class PieceBuilder:
                 f"Unknown file format: {path}. Supported: .mid, .midi"
             )
 
+    # -------------------------------------------------------------------------
+    # Playback Methods
+    # -------------------------------------------------------------------------
+
+    def play(
+        self,
+        backend: "PlaybackBackend | None" = None,
+        instruments: "InstrumentBank | None" = None,
+        from_bar: int | None = None,
+        section: str | None = None,
+        wait: bool = True,
+    ) -> "PlaybackHandle":
+        """
+        Play this piece.
+
+        Args:
+            backend: Playback backend to use (default: auto-detect)
+            instruments: InstrumentBank for custom instrument sounds
+            from_bar: Start from a specific bar (1-indexed)
+            section: Play only a specific section
+            wait: If True, block until playback completes
+
+        Returns:
+            PlaybackHandle for transport control
+
+        Example:
+            p.play()  # Play with defaults
+            p.play(from_bar=5)  # Start from bar 5
+            p.play(section="verse")  # Play only the verse
+
+            # Custom instruments
+            from pypulang.playback import Synth, InstrumentBank
+            instruments = InstrumentBank({Role.BASS: Synth(waveform="saw")})
+            p.play(instruments=instruments)
+        """
+        from pypulang.playback.config import get_default_backend
+
+        if backend is None:
+            backend = get_default_backend()
+
+        # Realize piece to events
+        ir = self.to_ir()
+        events, tempo = realize_to_events(ir, from_bar=from_bar, section=section)
+
+        # Start playback
+        handle = backend.play(events, tempo, instruments)
+
+        if wait:
+            handle.wait()
+
+        return handle
+
+    def loop(
+        self,
+        count: int | None = None,
+        backend: "PlaybackBackend | None" = None,
+        instruments: "InstrumentBank | None" = None,
+        section: str | None = None,
+        bars: int | None = None,
+    ) -> "PlaybackHandle":
+        """
+        Loop this piece or a section.
+
+        Args:
+            count: Number of loops (None = infinite until stopped)
+            backend: Playback backend to use (default: auto-detect)
+            instruments: InstrumentBank for custom instrument sounds
+            section: Loop only a specific section
+            bars: Loop only this many bars (from section start if section specified)
+
+        Returns:
+            PlaybackHandle for transport control (use .stop() to end loop)
+
+        Example:
+            handle = p.loop()  # Loop forever
+            # ... later ...
+            handle.stop()
+
+            p.loop(count=4)  # Loop 4 times
+            p.loop(section="verse")  # Loop the verse
+        """
+        from pypulang.playback.config import get_default_backend
+
+        if backend is None:
+            backend = get_default_backend()
+
+        # Realize piece to events
+        ir = self.to_ir()
+        events, tempo = realize_to_events(ir, section=section)
+
+        # Handle bars limit - filter events to only those within bar range
+        if bars is not None:
+            beats_per_bar = float(self._time_signature.beats_per_bar)
+            max_beat = bars * beats_per_bar
+            events = [
+                (pitch, start, dur, vel, track)
+                for pitch, start, dur, vel, track in events
+                if start < max_beat
+            ]
+            # Truncate notes that extend past the limit
+            events = [
+                (pitch, start, min(dur, max_beat - start), vel, track)
+                for pitch, start, dur, vel, track in events
+            ]
+
+        # Create looping handle
+        handle = _LoopingHandle(backend, events, tempo, instruments, count)
+        handle._start()
+
+        return handle
+
+    def stop(self) -> None:
+        """
+        Stop any active playback for this piece.
+
+        Note: This only works if you have a reference to the PlaybackHandle.
+        Use the handle returned by play() or loop() for precise control.
+        """
+        # This is a convenience method but requires tracking active handles
+        # For now, we recommend using the handle directly
+        pass
+
+    def connect(self, port: str = "pypulang") -> None:
+        """
+        Create a virtual MIDI port for DAW integration.
+
+        Args:
+            port: Name for the virtual MIDI port
+
+        Example:
+            p.connect(port="pypulang")
+            p.play(backend=VirtualMidi("pypulang"))
+        """
+        from pypulang.playback import VirtualMidi
+
+        midi_backend = VirtualMidi(port)
+        if not midi_backend.connect():
+            raise RuntimeError(f"Failed to create virtual MIDI port: {port}")
+
+    def list_ports(self) -> list[str]:
+        """
+        List available MIDI output ports.
+
+        Returns:
+            List of port names
+        """
+        from pypulang.playback import VirtualMidi
+
+        if VirtualMidi is None:
+            return []
+        midi_backend = VirtualMidi()
+        return midi_backend.list_ports()
+
     def __enter__(self) -> PieceBuilder:
         """Context manager entry."""
         return self
@@ -776,6 +931,93 @@ class PieceBuilder:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         pass
+
+
+class _LoopingHandle:
+    """
+    Handle for looping playback.
+
+    Manages repeated playback until stopped or count is reached.
+    """
+
+    def __init__(
+        self,
+        backend: "PlaybackBackend",
+        events: list[tuple[int, float, float, int, str]],
+        tempo: float,
+        instruments: "InstrumentBank | None",
+        count: int | None,
+    ) -> None:
+        self._backend = backend
+        self._events = events
+        self._tempo = tempo
+        self._instruments = instruments
+        self._count = count
+        self._current_handle: "PlaybackHandle | None" = None
+        self._stopped = False
+        self._loop_count = 0
+        self._thread: Any = None
+
+    def _start(self) -> None:
+        """Start the looping playback."""
+        import threading
+
+        self._stopped = False
+        self._loop_count = 0
+        self._thread = threading.Thread(target=self._loop_thread, daemon=True)
+        self._thread.start()
+
+    def _loop_thread(self) -> None:
+        """Thread that handles looping."""
+        while not self._stopped:
+            # Check count limit
+            if self._count is not None and self._loop_count >= self._count:
+                break
+
+            # Start playback
+            self._current_handle = self._backend.play(
+                self._events, self._tempo, self._instruments
+            )
+
+            # Wait for this iteration to complete
+            self._current_handle.wait()
+            self._loop_count += 1
+
+            if self._stopped:
+                break
+
+    def stop(self) -> None:
+        """Stop looping playback."""
+        self._stopped = True
+        if self._current_handle is not None:
+            self._current_handle.stop()
+
+    def pause(self) -> None:
+        """Pause current playback."""
+        if self._current_handle is not None:
+            self._current_handle.pause()
+
+    def resume(self) -> None:
+        """Resume paused playback."""
+        if self._current_handle is not None:
+            self._current_handle.resume()
+
+    def is_playing(self) -> bool:
+        """Check if currently playing."""
+        if self._current_handle is not None:
+            return self._current_handle.is_playing()
+        return False
+
+    def is_paused(self) -> bool:
+        """Check if currently paused."""
+        if self._current_handle is not None:
+            return self._current_handle.is_paused()
+        return False
+
+    def wait(self) -> None:
+        """Wait for looping to complete (only if count is set)."""
+        if self._thread is not None:
+            self._thread.join()
 
 
 # -----------------------------------------------------------------------------

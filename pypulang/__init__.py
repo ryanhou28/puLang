@@ -138,6 +138,13 @@ from pypulang.pitches import (
     REST,
 )
 
+# Playback configuration (available even without optional deps)
+from pypulang.playback.config import (
+    get_default_backend,
+    set_default_backend,
+    get_available_backends,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -221,4 +228,8 @@ __all__ = [
     # MIDI emission
     "realize_to_midi",
     "save_midi",
+    # Playback configuration
+    "get_default_backend",
+    "set_default_backend",
+    "get_available_backends",
 ]

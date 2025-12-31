@@ -1,29 +1,24 @@
 """
-pyPuLang playback example - Play MIDI directly from Python.
+pyPuLang playback example - Play music directly from Python.
 
-This example shows multiple ways to play your compositions:
+This example demonstrates the built-in playback system:
 
-1. pygame.mixer - Simple, cross-platform, but limited instrument choice
-2. pyfluidsynth - Full SoundFont support, swap instruments easily
-3. midi2audio - Convert to WAV/MP3 for sharing
+1. Basic playback with p.play()
+2. Looping with p.loop()
+3. Custom instruments with Synth and InstrumentBank
+4. Virtual MIDI for DAW integration
 
-Installation:
-    pip install pygame              # Option 1: Simple playback
-    pip install pyfluidsynth        # Option 2: Full synth (requires FluidSynth)
-    pip install midi2audio          # Option 3: Render to audio file
-
-For FluidSynth, you also need the system library:
-    macOS:   brew install fluid-synth
-    Ubuntu:  sudo apt-get install fluidsynth
-    Windows: Download from https://github.com/FluidSynth/fluidsynth/releases
+Requirements (all included in core pypulang):
+    - sounddevice (built-in synth)
+    - numpy (audio processing)
+    - python-rtmidi (virtual MIDI ports)
 """
 
-from pypulang import *
-import tempfile
-import os
+from pypulang import piece, I, IV, vi, V, Role, root_quarters, block_chords, arp
 
-# Create a simple composition
+
 def create_composition():
+    """Create a simple 4-bar composition."""
     with piece(tempo=120, key="C major") as p:
         verse = p.section("verse", bars=4)
         verse.harmony(I, IV, vi, V)
@@ -31,150 +26,289 @@ def create_composition():
         verse.track("keys", role=Role.HARMONY).pattern(block_chords)
     return p
 
-# Option 1: pygame.mixer (simplest, works on most systems)
-def play_with_pygame(p):
+
+def create_multi_track_composition():
+    """Create a more complex composition with multiple tracks."""
+    with piece(tempo=100, key="G major") as p:
+        verse = p.section("verse", bars=8)
+        verse.harmony(I, vi, IV, V)
+        verse.track("bass", role=Role.BASS).pattern(root_quarters).octave(-2)
+        verse.track("keys", role=Role.HARMONY).pattern(arp("up")).octave(0)
+        verse.track("pad", role=Role.HARMONY).pattern(block_chords)
+
+        chorus = p.section("chorus", bars=8)
+        chorus.harmony(IV, V, I, vi)
+        chorus.track("bass", role=Role.BASS).pattern(root_quarters).octave(-2)
+        chorus.track("keys", role=Role.HARMONY).pattern(block_chords)
+    return p
+
+
+# =============================================================================
+# Example 1: Basic Playback
+# =============================================================================
+
+def example_basic_playback():
     """
-    Play using pygame's built-in MIDI support.
+    Basic playback using the built-in synthesizer.
 
-    Pros: Simple, cross-platform, no external dependencies
-    Cons: Uses system default synth, limited control over instruments
+    This is the simplest way to hear your composition - just call p.play()!
     """
-    import pygame
+    print("Example 1: Basic Playback")
+    print("-" * 40)
 
-    # Save to temp file
-    with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as f:
-        temp_path = f.name
-
-    p.save_midi(temp_path)
-
-    # Initialize pygame mixer
-    pygame.mixer.init()
-    pygame.mixer.music.load(temp_path)
-    pygame.mixer.music.play()
-
-    # Wait for playback to finish
-    while pygame.mixer.music.get_busy():
-        pygame.time.wait(100)
-
-    pygame.mixer.quit()
-    os.unlink(temp_path)
-    print("Finished playing with pygame")
-
-
-# Option 2: pyfluidsynth
-def play_with_fluidsynth(p, soundfont_path=None):
-    """
-    Play using FluidSynth with SoundFont support.
-
-    Pros: Full control over instruments, high quality sound, real-time
-    Cons: Requires FluidSynth installation and a SoundFont file
-
-    SoundFonts to try:
-    - FluidR3_GM.sf2 (General MIDI, ~140MB, excellent quality)
-    - TimGM6mb.sf2 (General MIDI, ~6MB, good for testing)
-    - MuseScore_General.sf3 (from MuseScore, great quality)
-
-    Download free SoundFonts:
-    - https://musical-artifacts.com/artifacts?formats=sf2
-    - https://github.com/FluidSynth/fluidsynth/wiki/SoundFont
-    """
-    import fluidsynth
-    import tempfile
-    import time
-
-    # Save to temp file
-    with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as f:
-        temp_path = f.name
-    p.save_midi(temp_path)
-
-    # Create synth
-    fs = fluidsynth.Synth()
-    fs.start(driver="coreaudio")  # Use "alsa" on Linux, "dsound" on Windows
-
-    # Load SoundFont
-    if soundfont_path is None:
-        # Common locations to check
-        common_paths = [
-            "/usr/share/sounds/sf2/FluidR3_GM.sf2",  # Linux
-            "/usr/share/soundfonts/FluidR3_GM.sf2",  # Linux alt
-            "/opt/homebrew/share/soundfonts/default.sf2",  # macOS Homebrew
-            "~/soundfonts/FluidR3_GM.sf2",  # User directory
-        ]
-        for path in common_paths:
-            expanded = os.path.expanduser(path)
-            if os.path.exists(expanded):
-                soundfont_path = expanded
-                break
-
-    if soundfont_path is None:
-        print("No SoundFont found! Please download one and specify the path.")
-        print("Try: https://musical-artifacts.com/artifacts?formats=sf2")
-        return
-
-    sfid = fs.sfload(soundfont_path)
-    fs.program_select(0, sfid, 0, 0)  # Channel 0, bank 0, preset 0 (piano)
-
-    # For more control, you can set specific instruments per channel:
-    # fs.program_select(0, sfid, 0, 32)  # Acoustic Bass
-    # fs.program_select(1, sfid, 0, 0)   # Piano
-
-    # Play the MIDI file
-    player = fluidsynth.Player(fs)
-    player.add(temp_path)
-    player.play()
-    player.join()  # Wait for playback to complete
-
-    fs.delete()
-    os.unlink(temp_path)
-    print("Finished playing with FluidSynth")
-
-
-# Option 3: midi2audio (render to WAV/MP3)
-def render_to_audio(p, output_path="output.wav", soundfont_path=None):
-    """
-    Render to WAV or MP3 file using midi2audio.
-
-    Pros: Create shareable audio files, batch processing
-    Cons: Not real-time, requires SoundFont
-    """
-    from midi2audio import FluidSynth
-    import tempfile
-
-    # Save MIDI to temp file
-    with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as f:
-        temp_midi = f.name
-    p.save_midi(temp_midi)
-
-    # Convert to audio
-    fs = FluidSynth(soundfont_path) if soundfont_path else FluidSynth()
-    fs.midi_to_audio(temp_midi, output_path)
-
-    os.unlink(temp_midi)
-    print(f"Rendered to {output_path}")
-
-def quick_play(p):
-    """Try to play using available library, or just save the file."""
-    try:
-        play_with_pygame(p)
-        return
-    except ImportError:
-        pass
-
-    try:
-        play_with_fluidsynth(p)
-        return
-    except ImportError:
-        pass
-
-    # Fallback: just save the file
-    p.save_midi("output.mid")
-    print("No playback library found. Saved to output.mid")
-    print("Install pygame (pip install pygame) for simple playback")
-
-# Main
-if __name__ == "__main__":
-    print("Creating composition...")
     p = create_composition()
 
-    print("\nTrying to play...")
-    quick_play(p)
+    print("Playing composition with built-in synth...")
+    p.play()  # Blocks until playback completes
+
+    print("Done!")
+
+
+# =============================================================================
+# Example 2: Non-blocking Playback with Transport Control
+# =============================================================================
+
+def example_transport_control():
+    """
+    Non-blocking playback with transport controls.
+
+    Use wait=False to get a handle for controlling playback.
+    """
+    import time
+
+    print("\nExample 2: Transport Control")
+    print("-" * 40)
+
+    p = create_composition()
+
+    print("Starting playback (non-blocking)...")
+    handle = p.play(wait=False)
+
+    # Do other things while music plays
+    time.sleep(2)
+
+    print("Pausing...")
+    handle.pause()
+    time.sleep(1)
+
+    print("Resuming...")
+    handle.resume()
+
+    # Wait for completion
+    handle.wait()
+    print("Done!")
+
+
+# =============================================================================
+# Example 3: Looping
+# =============================================================================
+
+def example_looping():
+    """
+    Loop a composition or section.
+
+    Great for practicing or tweaking while listening.
+    """
+    import time
+
+    print("\nExample 3: Looping")
+    print("-" * 40)
+
+    p = create_composition()
+
+    print("Looping 3 times...")
+    handle = p.loop(count=3)
+    handle.wait()
+
+    print("Done!")
+
+
+# =============================================================================
+# Example 4: Section Playback
+# =============================================================================
+
+def example_section_playback():
+    """
+    Play or loop specific sections.
+
+    Useful for focusing on a particular part of your composition.
+    """
+    print("\nExample 4: Section Playback")
+    print("-" * 40)
+
+    p = create_multi_track_composition()
+
+    print("Playing just the verse...")
+    p.play(section="verse")
+
+    print("Playing just the chorus...")
+    p.play(section="chorus")
+
+    print("Done!")
+
+
+# =============================================================================
+# Example 5: Custom Instruments
+# =============================================================================
+
+def example_custom_instruments():
+    """
+    Customize the sound using Synth and InstrumentBank.
+
+    Different waveforms, envelopes, and filters for each track.
+    """
+    from pypulang.playback import Synth, InstrumentBank
+
+    print("\nExample 5: Custom Instruments")
+    print("-" * 40)
+
+    p = create_composition()
+
+    # Create custom instruments
+    instruments = InstrumentBank({
+        # Punchy bass with saw wave and low-pass filter
+        Role.BASS: Synth(
+            waveform="saw",
+            attack=0.01,
+            decay=0.1,
+            sustain=0.8,
+            release=0.1,
+            filter_type="lowpass",
+            cutoff=400,
+        ),
+        # Soft pad with triangle wave and slow attack
+        Role.HARMONY: Synth(
+            waveform="triangle",
+            attack=0.2,
+            decay=0.1,
+            sustain=0.7,
+            release=0.3,
+        ),
+    })
+
+    print("Playing with custom instruments...")
+    p.play(instruments=instruments)
+
+    print("Done!")
+
+
+# =============================================================================
+# Example 6: Synth Presets
+# =============================================================================
+
+def example_synth_presets():
+    """
+    Use built-in synth presets for quick sound design.
+    """
+    from pypulang.playback import InstrumentBank, SynthBass, SynthPad, SynthLead
+
+    print("\nExample 6: Synth Presets")
+    print("-" * 40)
+
+    p = create_composition()
+
+    # Use preset synths
+    instruments = InstrumentBank({
+        Role.BASS: SynthBass(),      # Saw wave with low-pass filter
+        Role.HARMONY: SynthPad(),    # Triangle wave with slow attack
+        # SynthLead() is also available for melody lines
+    })
+
+    print("Playing with preset synths...")
+    p.play(instruments=instruments)
+
+    print("Done!")
+
+
+# =============================================================================
+# Example 7: Virtual MIDI (DAW Integration)
+# =============================================================================
+
+def example_virtual_midi():
+    """
+    Route MIDI to your DAW via a virtual MIDI port.
+
+    Setup:
+    - macOS: Use IAC Driver (Audio MIDI Setup > IAC Driver > enable)
+    - Windows: Install loopMIDI (https://www.tobias-erichsen.de/software/loopmidi.html)
+    - Linux: ALSA virtual ports (usually work out of the box)
+
+    Then in your DAW:
+    1. Create a MIDI track
+    2. Set input to "pypulang" virtual port
+    3. Arm the track for recording
+    4. Run this example
+    """
+    from pypulang.playback import VirtualMidi
+
+    print("\nExample 7: Virtual MIDI")
+    print("-" * 40)
+
+    p = create_composition()
+
+    # List available MIDI ports
+    ports = p.list_ports()
+    print(f"Available MIDI ports: {ports}")
+
+    # Create virtual MIDI port and play
+    print("Creating virtual MIDI port 'pypulang'...")
+    print("Connect your DAW to this port to hear the output.")
+
+    try:
+        midi_backend = VirtualMidi("pypulang")
+        if midi_backend.is_available():
+            print("Playing via virtual MIDI...")
+            p.play(backend=midi_backend)
+            print("Done!")
+        else:
+            print("python-rtmidi not available. Install with: pip install python-rtmidi")
+    except Exception as e:
+        print(f"Virtual MIDI error: {e}")
+        print("Make sure you have virtual MIDI ports set up on your system.")
+
+
+# =============================================================================
+# Example 8: Start from Specific Bar
+# =============================================================================
+
+def example_from_bar():
+    """
+    Start playback from a specific bar.
+
+    Useful for jumping to a specific part of a long composition.
+    """
+    print("\nExample 8: Start from Bar")
+    print("-" * 40)
+
+    p = create_multi_track_composition()
+
+    print("Playing from bar 5 (middle of the piece)...")
+    p.play(from_bar=5)
+
+    print("Done!")
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("pyPuLang Playback Examples")
+    print("=" * 60)
+
+    # Run basic example by default
+    example_basic_playback()
+
+    # Uncomment to run other examples:
+    # example_transport_control()
+    # example_looping()
+    # example_section_playback()
+    # example_custom_instruments()
+    # example_synth_presets()
+    # example_virtual_midi()
+    # example_from_bar()
+
+    print("\n" + "=" * 60)
+    print("To run other examples, uncomment them in the main block.")
+    print("=" * 60)

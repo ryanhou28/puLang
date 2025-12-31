@@ -352,3 +352,96 @@ def save_midi(piece: Piece, path: str, ticks_per_beat: int = DEFAULT_TICKS_PER_B
     """
     midi_file = realize_to_midi(piece, ticks_per_beat)
     midi_file.save(path)
+
+
+def realize_to_events(
+    piece: Piece,
+    from_bar: int | None = None,
+    section: str | None = None,
+) -> tuple[list[tuple[int, float, float, int, str]], float]:
+    """
+    Realize a Piece to playback events.
+
+    Returns events in a format suitable for playback backends:
+    (pitch, start_beat, duration_beats, velocity, track_name)
+
+    Args:
+        piece: The Piece to realize
+        from_bar: Optional starting bar number (1-indexed)
+        section: Optional section name to realize only that section
+
+    Returns:
+        Tuple of (events list, tempo)
+        Events are: (pitch, start_beat, duration_beats, velocity, track_name)
+    """
+    # Collect all note events with track names
+    all_events: list[tuple[int, float, float, int, str]] = []
+
+    # Process sections in form order (or linear if no form specified)
+    section_order = piece.form if piece.form else [s.name for s in piece.sections]
+    section_map = {s.name: s for s in piece.sections}
+
+    # Filter to specific section if requested
+    if section is not None:
+        if section not in section_map:
+            raise ValueError(f"Unknown section: {section}")
+        section_order = [section]
+
+    current_beat = Fraction(0)
+    start_beat_offset = Fraction(0)
+
+    # Calculate start offset if from_bar is specified
+    if from_bar is not None and from_bar > 1:
+        bar_count = 0
+        for section_name in section_order:
+            sec = section_map[section_name]
+            section_ts = sec.time_signature if sec.time_signature else piece.time_signature
+            for _ in range(sec.bars):
+                bar_count += 1
+                if bar_count < from_bar:
+                    start_beat_offset += section_ts.beats_per_bar
+
+    for section_name in section_order:
+        if section_name not in section_map:
+            raise ValueError(f"Unknown section in form: {section_name}")
+
+        sec = section_map[section_name]
+
+        # Resolve section-level key and time signature
+        section_key = sec.key if sec.key else piece.key
+        section_ts = sec.time_signature if sec.time_signature else piece.time_signature
+
+        # Calculate section length in beats
+        section_beats = Fraction(sec.bars) * section_ts.beats_per_bar
+
+        # Process each track in the section
+        for track in sec.tracks:
+            if track.muted:
+                continue
+
+            # Generate notes based on track content
+            notes = _realize_track(
+                track=track,
+                harmony=sec.harmony,
+                key=section_key,
+                time_signature=section_ts,
+                section_offset=current_beat,
+                section_bars=sec.bars,
+            )
+
+            # Convert to playback event format with track name
+            for pitch, start, duration, velocity in notes:
+                # Adjust for from_bar offset
+                adjusted_start = float(start - start_beat_offset)
+                if adjusted_start >= 0:
+                    all_events.append((
+                        pitch,
+                        adjusted_start,
+                        float(duration),
+                        velocity,
+                        track.name,
+                    ))
+
+        current_beat += section_beats
+
+    return all_events, piece.tempo

@@ -1,6 +1,5 @@
 # puLang
 
-
 ## Installation
 
 ```bash
