@@ -48,6 +48,28 @@ ruff format .
 
 See [docs/style-guide.md](docs/style-guide.md) for full style guidelines.
 
+## Virtual MIDI Setup (DAW Integration)
+
+To route pypulang output to your DAW, you need a virtual MIDI port:
+
+**macOS:** Enable IAC Driver
+1. Open "Audio MIDI Setup" (Spotlight → "Audio MIDI Setup")
+2. Window → Show MIDI Studio
+3. Double-click "IAC Driver"
+4. Check "Device is online"
+
+**Windows:** Install loopMIDI
+1. Download from [tobias-erichsen.de/software/loopmidi.html](https://www.tobias-erichsen.de/software/loopmidi.html)
+2. Run loopMIDI and create a port
+
+**Linux:** ALSA virtual ports work automatically.
+
+Then in your code:
+```python
+from pypulang.playback import VirtualMidi
+p.play(backend=VirtualMidi("pypulang"))
+```
+
 ## Documentation
 
 - [Style Guide](docs/style-guide.md) - Code style and formatting
