@@ -352,3 +352,242 @@ def arp(
         seq_index += 1
 
     return events
+
+
+# -----------------------------------------------------------------------------
+# Drum Patterns
+# -----------------------------------------------------------------------------
+# Drum patterns ignore chord_pitches since they use fixed drum sounds.
+# These patterns use GM drum map constants from the drums module.
+
+
+@register_pattern("rock_beat")
+def rock_beat(
+    chord_pitches: list[int],  # noqa: ARG001 - drums ignore chord context
+    duration: Fraction,
+    offset: Fraction,
+    track_params: dict[str, Any],
+    pattern_params: dict[str, Any],
+) -> list[NoteEvent]:
+    """
+    Classic rock drum beat.
+
+    Pattern (in 4/4):
+    - Kick: beats 1 and 3
+    - Snare: beats 2 and 4
+    - Hi-hat: eighth notes (all beats)
+
+    Args:
+        pattern_params:
+            hihat: "closed" (default) or "open"
+            tempo_feel: "straight" (default) or "swing" (for future use)
+    """
+    # Lazy import to avoid circular dependency
+    from pypulang import drums
+
+    velocity = track_params.get("velocity", 100)
+    hihat_type = pattern_params.get("hihat", "closed")
+
+    # Choose hihat sound
+    hihat = drums.HIHAT_CLOSED if hihat_type == "closed" else drums.HIHAT_OPEN
+
+    events = []
+    current_beat = Fraction(0)
+
+    while current_beat < duration:
+        beat_in_bar = current_beat % 4
+
+        # Kick on beats 1 and 3 (0-indexed: 0 and 2)
+        if beat_in_bar == 0 or beat_in_bar == 2:
+            events.append((drums.KICK.midi, offset + current_beat, Fraction(1, 4), velocity))
+
+        # Snare on beats 2 and 4 (0-indexed: 1 and 3)
+        if beat_in_bar == 1 or beat_in_bar == 3:
+            events.append((drums.SNARE.midi, offset + current_beat, Fraction(1, 4), velocity))
+
+        # Hi-hat on every eighth note
+        for eighth in [Fraction(0), Fraction(1, 2)]:
+            if current_beat + eighth < duration:
+                # Slightly lower velocity for hi-hat
+                hihat_vel = int(velocity * 0.7)
+                events.append((hihat.midi, offset + current_beat + eighth, Fraction(1, 8), hihat_vel))
+
+        current_beat += 1  # Move to next beat
+
+    return events
+
+
+@register_pattern("four_on_floor")
+def four_on_floor(
+    chord_pitches: list[int],  # noqa: ARG001 - drums ignore chord context
+    duration: Fraction,
+    offset: Fraction,
+    track_params: dict[str, Any],
+    pattern_params: dict[str, Any],
+) -> list[NoteEvent]:
+    """
+    Four-on-the-floor dance beat.
+
+    Pattern:
+    - Kick: every beat (1, 2, 3, 4)
+    - Hi-hat: eighth notes or sixteenth notes
+
+    Args:
+        pattern_params:
+            hihat_rate: 1/8 (default) or 1/16
+    """
+    # Lazy import to avoid circular dependency
+    from pypulang import drums
+
+    velocity = track_params.get("velocity", 100)
+    hihat_rate = pattern_params.get("hihat_rate", Fraction(1, 8))
+    if not isinstance(hihat_rate, Fraction):
+        hihat_rate = Fraction(hihat_rate)
+
+    events = []
+    current_beat = Fraction(0)
+
+    # Kick on every beat
+    while current_beat < duration:
+        events.append((drums.KICK.midi, offset + current_beat, Fraction(1, 4), velocity))
+        current_beat += 1
+
+    # Hi-hat at specified rate
+    current_time = Fraction(0)
+    hihat_vel = int(velocity * 0.6)
+    while current_time < duration:
+        events.append((drums.HIHAT_CLOSED.midi, offset + current_time, hihat_rate, hihat_vel))
+        current_time += hihat_rate
+
+    return events
+
+
+@register_pattern("backbeat")
+def backbeat(
+    chord_pitches: list[int],  # noqa: ARG001 - drums ignore chord context
+    duration: Fraction,
+    offset: Fraction,
+    track_params: dict[str, Any],
+    pattern_params: dict[str, Any],  # noqa: ARG001 - no params for backbeat
+) -> list[NoteEvent]:
+    """
+    Simple backbeat pattern - snare on beats 2 and 4 only.
+
+    Useful for layering with other drum patterns or creating minimal grooves.
+    """
+    # Lazy import to avoid circular dependency
+    from pypulang import drums
+
+    velocity = track_params.get("velocity", 100)
+    events = []
+
+    current_beat = Fraction(0)
+    while current_beat < duration:
+        beat_in_bar = current_beat % 4
+
+        # Snare on beats 2 and 4 (0-indexed: 1 and 3)
+        if beat_in_bar == 1 or beat_in_bar == 3:
+            events.append((drums.SNARE.midi, offset + current_beat, Fraction(1, 4), velocity))
+
+        current_beat += 1
+
+    return events
+
+
+@register_pattern("eighth_hats")
+def eighth_hats(
+    chord_pitches: list[int],  # noqa: ARG001 - drums ignore chord context
+    duration: Fraction,
+    offset: Fraction,
+    track_params: dict[str, Any],
+    pattern_params: dict[str, Any],
+) -> list[NoteEvent]:
+    """
+    Hi-hat pattern - eighth notes only.
+
+    Useful for layering with other drum patterns or creating minimal hi-hat grooves.
+
+    Args:
+        pattern_params:
+            hihat: "closed" (default) or "open"
+    """
+    # Lazy import to avoid circular dependency
+    from pypulang import drums
+
+    velocity = track_params.get("velocity", 100)
+    hihat_type = pattern_params.get("hihat", "closed")
+
+    hihat = drums.HIHAT_CLOSED if hihat_type == "closed" else drums.HIHAT_OPEN
+
+    events = []
+    current_time = Fraction(0)
+    rate = Fraction(1, 2)  # Eighth notes
+
+    while current_time < duration:
+        events.append((hihat.midi, offset + current_time, rate, velocity))
+        current_time += rate
+
+    return events
+
+
+@register_pattern("shuffle")
+def shuffle(
+    chord_pitches: list[int],  # noqa: ARG001 - drums ignore chord context
+    duration: Fraction,
+    offset: Fraction,
+    track_params: dict[str, Any],
+    pattern_params: dict[str, Any],
+) -> list[NoteEvent]:
+    """
+    Shuffle/swing drum pattern.
+
+    Pattern:
+    - Kick on beats 1 and 3
+    - Snare on beats 2 and 4
+    - Swung hi-hat (triplet feel)
+
+    Args:
+        pattern_params:
+            swing_ratio: 2.0 (default, 2:1 triplet swing) or custom ratio (unused for now)
+    """
+    # Lazy import to avoid circular dependency
+    from pypulang import drums
+
+    velocity = track_params.get("velocity", 100)
+    _ = pattern_params.get("swing_ratio", 2.0)  # Reserved for future use
+
+    events = []
+    current_beat = Fraction(0)
+
+    while current_beat < duration:
+        beat_in_bar = current_beat % 4
+
+        # Kick on beats 1 and 3
+        if beat_in_bar == 0 or beat_in_bar == 2:
+            events.append((drums.KICK.midi, offset + current_beat, Fraction(1, 4), velocity))
+
+        # Snare on beats 2 and 4
+        if beat_in_bar == 1 or beat_in_bar == 3:
+            events.append((drums.SNARE.midi, offset + current_beat, Fraction(1, 4), velocity))
+
+        # Swung hi-hat (triplet-based)
+        # In shuffle, we divide each beat into triplets: first and third triplet get hits
+        triplet_duration = Fraction(1, 3)
+        hihat_vel = int(velocity * 0.7)
+
+        # First triplet (on the beat)
+        if current_beat < duration:
+            events.append(
+                (drums.HIHAT_CLOSED.midi, offset + current_beat, triplet_duration, hihat_vel)
+            )
+
+        # Third triplet (swung eighth note)
+        swung_offset = current_beat + (triplet_duration * 2)
+        if swung_offset < duration:
+            events.append(
+                (drums.HIHAT_CLOSED.midi, offset + swung_offset, triplet_duration, hihat_vel)
+            )
+
+        current_beat += 1
+
+    return events

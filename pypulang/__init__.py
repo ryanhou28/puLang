@@ -1,7 +1,7 @@
 """
 pypulang - Python-embedded DSL for puLang music composition.
 
-Phase 2: Patterns, Escape Hatch, and Live Playback
+Phase 2.5: Patterns, Escape Hatch, Live Playback, and Drums
 
 Usage:
     from pypulang import *
@@ -28,6 +28,24 @@ Escape Hatch (Literal Notes):
         ])
 
     p.save_midi("song.mid")
+
+Drums (Phase 2.5):
+    from pypulang import *
+    from pypulang.drums import KICK, SNARE, HIHAT_CLOSED
+
+    with piece(tempo=120, key="C major") as p:
+        verse = p.section("verse", bars=4)
+        verse.harmony(I, IV, vi, V)
+
+        # Use drum patterns
+        verse.track("drums", role=Role.RHYTHM).pattern(rock_beat)
+
+        # Or use literal drum hits
+        verse.track("kick", role=Role.RHYTHM).notes([
+            (KICK, 1/4), (KICK, 1/4), (KICK, 1/4), (KICK, 1/4),
+        ])
+
+    p.save_midi("output.mid")
 """
 
 __version__ = "0.1.0"
@@ -117,6 +135,12 @@ from pypulang.dsl import (
     root_fifths,
     block_chords,
     arp,
+    # Drum pattern singletons (Phase 2.5)
+    rock_beat,
+    four_on_floor,
+    backbeat,
+    eighth_hats,
+    shuffle,
     # Builder classes (for type hints)
     PieceBuilder,
     SectionBuilder,
@@ -187,6 +211,12 @@ __all__ = [
     "root_fifths",
     "block_chords",
     "arp",
+    # Drum pattern singletons (Phase 2.5)
+    "rock_beat",
+    "four_on_floor",
+    "backbeat",
+    "eighth_hats",
+    "shuffle",
     # Builder classes
     "PieceBuilder",
     "SectionBuilder",

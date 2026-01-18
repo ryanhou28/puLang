@@ -182,7 +182,7 @@ class BuiltinSynth(BasePlaybackBackend):
 
     def play(
         self,
-        events: list[tuple[int, float, float, int, str]],
+        events: list[tuple[int, float, float, int, str, str]],
         tempo: float,
         instruments: InstrumentBank | None = None,
     ) -> BuiltinSynthHandle:
@@ -191,7 +191,7 @@ class BuiltinSynth(BasePlaybackBackend):
 
         Args:
             events: List of note events as tuples:
-                    (pitch, start_beat, duration_beats, velocity, track_name)
+                    (pitch, start_beat, duration_beats, velocity, track_name, role)
             tempo: Tempo in BPM
             instruments: Optional InstrumentBank for sound assignment
 
@@ -216,7 +216,7 @@ class BuiltinSynth(BasePlaybackBackend):
 
     def _render_events(
         self,
-        events: list[tuple[int, float, float, int, str]],
+        events: list[tuple[int, float, float, int, str, str]],
         tempo: float,
         instruments: InstrumentBank,
     ) -> npt.NDArray[np.float32]:
@@ -229,7 +229,7 @@ class BuiltinSynth(BasePlaybackBackend):
         seconds_per_beat = 1.0 / beats_per_second
 
         max_end_beat = 0.0
-        for _pitch, start, duration, _velocity, _track in events:
+        for _pitch, start, duration, _velocity, _track, _role in events:
             end_beat = start + duration
             if end_beat > max_end_beat:
                 max_end_beat = end_beat
@@ -242,13 +242,9 @@ class BuiltinSynth(BasePlaybackBackend):
         # Create output buffer
         output = np.zeros(total_samples, dtype=np.float32)
 
-        # Track to role mapping (simplified - would need actual track data)
-        track_roles: dict[str, str | None] = {}
-
         # Render each event
-        for pitch, start_beat, duration_beats, velocity, track_name in events:
-            # Get instrument for track
-            role = track_roles.get(track_name)
+        for pitch, start_beat, duration_beats, velocity, track_name, role in events:
+            # Get instrument for track using the role from the event
             instrument = instruments.get_instrument(track_name, role)
 
             # Convert to seconds

@@ -81,6 +81,7 @@ def realize_to_midi(
     # Collect all note events from all sections/tracks
     # Group by track name for MIDI track creation
     track_events: dict[str, list[tuple[int, Fraction, Fraction, int]]] = {}
+    track_roles: dict[str, str | None] = {}  # Track name -> role
 
     # Process sections in form order (or linear if no form specified)
     section_order = piece.form if piece.form else [s.name for s in piece.sections]
@@ -108,6 +109,7 @@ def realize_to_midi(
 
             if track.name not in track_events:
                 track_events[track.name] = []
+                track_roles[track.name] = track.role
 
             # Generate notes based on track content
             notes = _realize_track(
@@ -124,10 +126,12 @@ def realize_to_midi(
 
     # Create MIDI tracks for each puLang track
     for track_name, events in track_events.items():
+        role = track_roles.get(track_name)
         midi_track = _create_midi_track(
             track_name=track_name,
             events=events,
             ticks_per_beat=ticks_per_beat,
+            role=role,
         )
         midi_file.tracks.append(midi_track)
 
@@ -280,17 +284,31 @@ def _create_midi_track(
     track_name: str,
     events: list[tuple[int, Fraction, Fraction, int]],
     ticks_per_beat: int,
+    role: str | None = None,
 ) -> mido.MidiTrack:
     """
     Create a MIDI track from note events.
 
     MIDI uses delta times (time since last event), so we need to convert
     absolute beat positions to deltas and then to ticks.
+
+    Args:
+        track_name: Name of the track
+        events: List of (pitch, start_beat, duration_beats, velocity) tuples
+        ticks_per_beat: MIDI resolution
+        role: Track role (used to determine MIDI channel; RHYTHM -> channel 10)
+
+    Returns:
+        A mido.MidiTrack ready to be added to a MIDI file
     """
     midi_track = mido.MidiTrack()
 
     # Track name
     midi_track.append(mido.MetaMessage("track_name", name=track_name, time=0))
+
+    # Determine MIDI channel based on role
+    # GM standard: channel 10 (0-indexed: 9) is for percussion/drums
+    channel = 9 if role == "rhythm" else 0
 
     # Convert note events to MIDI messages
     # Each note needs a note_on and note_off event
@@ -317,9 +335,13 @@ def _create_midi_track(
         current_tick = tick
 
         if msg_type == "note_on":
-            midi_track.append(mido.Message("note_on", note=pitch, velocity=velocity, time=delta))
+            midi_track.append(
+                mido.Message("note_on", note=pitch, velocity=velocity, time=delta, channel=channel)
+            )
         else:
-            midi_track.append(mido.Message("note_off", note=pitch, velocity=velocity, time=delta))
+            midi_track.append(
+                mido.Message("note_off", note=pitch, velocity=velocity, time=delta, channel=channel)
+            )
 
     # End of track
     midi_track.append(mido.MetaMessage("end_of_track", time=0))
@@ -358,12 +380,12 @@ def realize_to_events(
     piece: Piece,
     from_bar: int | None = None,
     section: str | None = None,
-) -> tuple[list[tuple[int, float, float, int, str]], float]:
+) -> tuple[list[tuple[int, float, float, int, str, str]], float]:
     """
     Realize a Piece to playback events.
 
     Returns events in a format suitable for playback backends:
-    (pitch, start_beat, duration_beats, velocity, track_name)
+    (pitch, start_beat, duration_beats, velocity, track_name, role)
 
     Args:
         piece: The Piece to realize
@@ -372,10 +394,10 @@ def realize_to_events(
 
     Returns:
         Tuple of (events list, tempo)
-        Events are: (pitch, start_beat, duration_beats, velocity, track_name)
+        Events are: (pitch, start_beat, duration_beats, velocity, track_name, role)
     """
-    # Collect all note events with track names
-    all_events: list[tuple[int, float, float, int, str]] = []
+    # Collect all note events with track names and roles
+    all_events: list[tuple[int, float, float, int, str, str]] = []
 
     # Process sections in form order (or linear if no form specified)
     section_order = piece.form if piece.form else [s.name for s in piece.sections]
@@ -429,7 +451,7 @@ def realize_to_events(
                 section_bars=sec.bars,
             )
 
-            # Convert to playback event format with track name
+            # Convert to playback event format with track name and role
             for pitch, start, duration, velocity in notes:
                 # Adjust for from_bar offset
                 adjusted_start = float(start - start_beat_offset)
@@ -440,6 +462,7 @@ def realize_to_events(
                         float(duration),
                         velocity,
                         track.name,
+                        track.role,
                     ))
 
         current_beat += section_beats

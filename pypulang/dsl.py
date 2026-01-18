@@ -340,6 +340,13 @@ root_fifths = PatternBuilder("root_fifths")
 block_chords = PatternBuilder("block_chords")
 arp = PatternBuilder("arp", direction="up")
 
+# Drum patterns (Phase 2.5)
+rock_beat = PatternBuilder("rock_beat")
+four_on_floor = PatternBuilder("four_on_floor")
+backbeat = PatternBuilder("backbeat")
+eighth_hats = PatternBuilder("eighth_hats")
+shuffle = PatternBuilder("shuffle")
+
 
 # -----------------------------------------------------------------------------
 # Track Builder

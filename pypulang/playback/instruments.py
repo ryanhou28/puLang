@@ -265,6 +265,169 @@ def SynthLead() -> Synth:
     )
 
 
+@dataclass
+class DrumSampler(Instrument):
+    """
+    Sample-based drum instrument.
+
+    Uses pre-recorded drum samples for realistic percussion sounds.
+    Falls back to simple synthesis if samples are not available.
+
+    Attributes:
+        fallback_to_synth: If True, use synthesis when samples unavailable
+    """
+
+    fallback_to_synth: bool = True
+
+    def render(
+        self,
+        pitch: int,
+        duration: float,
+        velocity: int,
+        sample_rate: int,
+    ) -> npt.NDArray[np.float32]:
+        """Render a drum hit from samples or synthesis."""
+        import numpy as np
+
+        # Try to load drum sample
+        try:
+            from pypulang.playback.drum_sampler import render_drum_sample
+
+            audio = render_drum_sample(pitch, duration, velocity, sample_rate)
+            if audio is not None:
+                return audio
+        except ImportError:
+            pass  # Fall through to synth
+
+        # Fallback to synthesis
+        if self.fallback_to_synth:
+            return self._synthesize_drum(pitch, duration, velocity, sample_rate)
+        else:
+            # Return silence
+            return np.zeros(int(duration * sample_rate), dtype=np.float32)
+
+    def _synthesize_drum(
+        self,
+        pitch: int,
+        duration: float,
+        velocity: int,
+        sample_rate: int,
+    ) -> npt.NDArray[np.float32]:
+        """
+        Synthesize a drum sound (fallback when samples unavailable).
+
+        Uses simple synthesis techniques for basic drum sounds.
+        """
+        import numpy as np
+
+        # Map common drum pitches to synthesis methods
+        if pitch in (35, 36):  # Kick
+            return self._synth_kick(duration, velocity, sample_rate)
+        elif pitch in (38, 40):  # Snare
+            return self._synth_snare(duration, velocity, sample_rate)
+        elif pitch in (42, 44, 46):  # Hi-hats
+            return self._synth_hihat(duration, velocity, sample_rate, pitch == 46)
+        else:
+            # Generic percussive sound
+            return self._synth_generic(pitch, duration, velocity, sample_rate)
+
+    def _synth_kick(
+        self, duration: float, velocity: int, sample_rate: int
+    ) -> npt.NDArray[np.float32]:
+        """Synthesize a kick drum."""
+        import numpy as np
+
+        num_samples = int(duration * sample_rate)
+        t = np.linspace(0, duration, num_samples, dtype=np.float32)
+
+        # Pitch envelope (starts at 150Hz, drops to 40Hz)
+        pitch_env = 150 * np.exp(-t * 30) + 40
+
+        # Amplitude envelope (fast decay)
+        amp_env = np.exp(-t * 15)
+
+        # Generate sine wave with pitch envelope
+        phase = 2 * np.pi * np.cumsum(pitch_env) / sample_rate
+        wave = np.sin(phase, dtype=np.float32)
+
+        # Add click at start
+        click_env = np.exp(-t * 200)
+        noise = np.random.randn(num_samples).astype(np.float32)
+        click = noise * click_env * 0.3
+
+        # Combine and apply envelope
+        audio = (wave + click) * amp_env * (velocity / 127)
+
+        return audio
+
+    def _synth_snare(
+        self, duration: float, velocity: int, sample_rate: int
+    ) -> npt.NDArray[np.float32]:
+        """Synthesize a snare drum."""
+        import numpy as np
+
+        num_samples = int(duration * sample_rate)
+        t = np.linspace(0, duration, num_samples, dtype=np.float32)
+
+        # Body: two sine waves
+        body1 = np.sin(2 * np.pi * 180 * t, dtype=np.float32)
+        body2 = np.sin(2 * np.pi * 330 * t, dtype=np.float32)
+        body = (body1 + body2) * 0.3
+
+        # Noise (snare buzz)
+        noise = np.random.randn(num_samples).astype(np.float32) * 0.7
+
+        # Envelope (fast attack, medium decay)
+        env = np.exp(-t * 20)
+
+        # Combine
+        audio = (body + noise) * env * (velocity / 127)
+
+        return audio
+
+    def _synth_hihat(
+        self, duration: float, velocity: int, sample_rate: int, is_open: bool = False
+    ) -> npt.NDArray[np.float32]:
+        """Synthesize a hi-hat."""
+        import numpy as np
+
+        num_samples = int(duration * sample_rate)
+        t = np.linspace(0, duration, num_samples, dtype=np.float32)
+
+        # Hi-hat is filtered white noise
+        noise = np.random.randn(num_samples).astype(np.float32)
+
+        # Envelope (very fast for closed, longer for open)
+        decay_rate = 50 if not is_open else 15
+        env = np.exp(-t * decay_rate)
+
+        # High-pass filter (simple)
+        # Apply envelope
+        audio = noise * env * (velocity / 127) * 0.5
+
+        return audio
+
+    def _synth_generic(
+        self, pitch: int, duration: float, velocity: int, sample_rate: int
+    ) -> npt.NDArray[np.float32]:
+        """Generic percussive sound for unmapped drum notes."""
+        import numpy as np
+
+        # Use pitch to frequency conversion, but with very fast decay
+        frequency = 440.0 * (2.0 ** ((pitch - 69) / 12.0))
+
+        num_samples = int(duration * sample_rate)
+        t = np.linspace(0, duration, num_samples, dtype=np.float32)
+
+        # Fast decaying sine wave
+        wave = np.sin(2 * np.pi * frequency * t, dtype=np.float32)
+        env = np.exp(-t * 30)
+
+        audio = wave * env * (velocity / 127)
+
+        return audio
+
+
 # Role enum import for type checking
 try:
     from pypulang.dsl import Role
@@ -343,7 +506,8 @@ class InstrumentBank:
         elif role == "melody":
             return Synth(waveform="square", attack=0.01)
         elif role == "rhythm":
-            return Synth(waveform="square", attack=0.001, decay=0.1, sustain=0.1)
+            # Use drum sampler for rhythm tracks (with synthesis fallback)
+            return DrumSampler(fallback_to_synth=True)
         else:
             return Synth(waveform="sine")
 
