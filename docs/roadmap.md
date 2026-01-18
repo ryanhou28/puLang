@@ -379,7 +379,7 @@ p.play(instruments=instruments)
 - [x] Preserve playback position across reloads (best effort)
 - [x] `p.watch()` — enable hot reload mode
 
-### 2.5 Drums and Percussion
+### 2.5 Drums and Percussion ✅
 
 **Goal:** First-class support for drums and percussion, using existing track/pattern infrastructure.
 
@@ -390,29 +390,47 @@ p.play(instruments=instruments)
 | Drum track type | Regular track with `role=Role.RHYTHM` | Minimal new API; drums are just tracks that ignore harmony |
 | Drum sounds | Named constants mapping to GM drum map | `KICK`, `SNARE`, `HIHAT` more readable than MIDI numbers |
 | Drum patterns | Pattern functions like melodic patterns | Consistent API; `rock_beat`, `four_on_floor`, etc. |
-| Grid notation | Optional `drums()` block with string patterns | Readable for complex polyrhythms; "x...x..." syntax |
 | MIDI channel | Auto-assign channel 10 for rhythm role | GM standard; transparent to user |
+| Default sound | Bundled synthetic samples (CC0) | Zero-config drum playback; fallback to synthesis if samples unavailable |
+| Sample format | OGG Vorbis (~60KB total) | Good compression, sufficient quality, small footprint |
 
-#### 2.5.1 Drum Sound Constants
-- [ ] Define `pypulang.drums` module
-- [ ] Define GM drum map constants:
-  - [ ] `KICK` (36), `KICK2` (35)
-  - [ ] `SNARE` (38), `SNARE2` (40), `RIMSHOT` (37), `CLAP` (39)
-  - [ ] `HIHAT_CLOSED` (42), `HIHAT_OPEN` (46), `HIHAT_PEDAL` (44)
-  - [ ] `TOM_LOW` (45), `TOM_MID` (47), `TOM_HIGH` (50)
-  - [ ] `CRASH` (49), `CRASH2` (57), `RIDE` (51), `RIDE_BELL` (53)
-  - [ ] `TAMBOURINE` (54), `COWBELL` (56), `SHAKER` (70)
-- [ ] Ensure drum constants work with existing `notes()` escape hatch
+#### 2.5.1 Drum Sound Constants ✅
+- [x] Define `pypulang.drums` module
+- [x] Define GM drum map constants:
+  - [x] `KICK` (36), `KICK2` (35)
+  - [x] `SNARE` (38), `SNARE2` (40), `RIMSHOT` (37), `CLAP` (39)
+  - [x] `HIHAT_CLOSED` (42), `HIHAT_OPEN` (46), `HIHAT_PEDAL` (44)
+  - [x] `TOM_LOW` (45), `TOM_MID` (47), `TOM_HIGH` (50)
+  - [x] `CRASH` (49), `CRASH2` (57), `RIDE` (51), `RIDE_BELL` (53)
+  - [x] `TAMBOURINE` (54), `COWBELL` (56), `SHAKER` (70)
+- [x] Ensure drum constants work with existing `notes()` escape hatch
 
-#### 2.5.2 Basic Drum Patterns
-- [ ] Implement `rock_beat` pattern (kick on 1/3, snare on 2/4, hihats on 8ths)
-- [ ] Implement `four_on_floor` pattern (kick on every beat)
-- [ ] Implement `backbeat` pattern (snare on 2/4 only)
-- [ ] Implement `eighth_hats` pattern (hihat only, eighth notes)
-- [ ] Implement `shuffle` pattern (swung hihat with kick/snare)
-- [ ] Pattern parameters: `hihat` (closed/open), `tempo_feel` (straight/swing)
+#### 2.5.2 Basic Drum Patterns ✅
+- [x] Implement `rock_beat` pattern (kick on 1/3, snare on 2/4, hihats on 8ths)
+- [x] Implement `four_on_floor` pattern (kick on every beat)
+- [x] Implement `backbeat` pattern (snare on 2/4 only)
+- [x] Implement `eighth_hats` pattern (hihat only, eighth notes)
+- [x] Implement `shuffle` pattern (swung hihat with kick/snare)
+- [x] Pattern parameters: `hihat` (closed/open), `tempo_feel` (straight/swing)
 
-#### 2.5.3 Grid Notation (Optional Sugar)
+#### 2.5.3 Drum Sample System ✅
+- [x] Implement `DrumSampler` instrument class
+- [x] Add bundled drum samples (kick, snare, hihat_closed, hihat_open, crash, ride)
+- [x] Generate synthetic CC0 samples using NumPy (~60KB total)
+- [x] Add `soundfile` dependency for sample loading
+- [x] Implement sample caching for performance
+- [x] Implement synthesis fallback when samples unavailable
+- [x] Create sample generation utility (`scripts/generate_drum_samples.py`)
+- [x] Document sample attribution and licensing
+
+#### 2.5.4 Drum Track Integration ✅
+- [x] Auto-assign MIDI channel 10 for `Role.RHYTHM` tracks
+- [x] Drum patterns ignore harmony (don't receive chord context)
+- [x] Support velocity per hit in patterns
+- [x] Fix role information passing through playback pipeline
+- [x] `DrumSampler` automatically used for rhythm role tracks
+
+#### 2.5.5 Grid Notation (Optional Sugar - Deferred)
 - [ ] Implement `drums()` context manager / block
 - [ ] Support string-based grid patterns: `"x...x...x...x..."`
 - [ ] `x` = hit, `.` = rest, `o` = accent, `-` = ghost note
@@ -420,18 +438,12 @@ p.play(instruments=instruments)
 - [ ] Each drum sound is a "lane": `d.kick("x...x...")`, `d.snare("....x...")`
 
 ```python
-# Grid notation example
+# Grid notation example (future)
 with verse.drums(grid=1/16) as d:
     d.kick("x...x...x...x...")
     d.snare("....x.......x...")
     d.hihat("x.x.x.x.x.x.x.x.")
 ```
-
-#### 2.5.4 Drum Track Integration
-- [ ] Auto-assign MIDI channel 10 for `Role.RHYTHM` tracks
-- [ ] Drum patterns ignore harmony (don't receive chord context)
-- [ ] Support velocity per hit in patterns
-- [ ] Support `fills=True` parameter for auto-generated fills
 
 ### 2.6 Second Test Composition
 - [ ] Compose 16-bar piece with verse + chorus structure
