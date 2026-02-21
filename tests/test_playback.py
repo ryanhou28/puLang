@@ -262,12 +262,13 @@ class TestRealizeToEvents:
 
         # Check event format
         for event in events:
-            pitch, start, duration, velocity, track_name = event
+            pitch, start, duration, velocity, track_name, role = event
             assert isinstance(pitch, int)
             assert isinstance(start, float)
             assert isinstance(duration, float)
             assert isinstance(velocity, int)
             assert track_name == "bass"
+            assert role == "bass"
 
     def test_realization_section_filter(self):
         """Test realizing only a specific section."""

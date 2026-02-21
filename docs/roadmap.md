@@ -202,10 +202,10 @@ section Verse [4 bars]
 See [pulang-syntax.md](pulang-syntax.md) for the full standalone syntax specification.
 
 ### Exit Criteria
-- [ ] Test composition produces valid MIDI file
-- [ ] MIDI file plays correctly in external player (user's responsibility)
-- [ ] Bass plays the root of each chord on each beat
-- [ ] `to_midi()` returns usable `mido.MidiFile` object
+- [x] Test composition produces valid MIDI file
+- [x] MIDI file plays correctly in external player (user's responsibility)
+- [x] Bass plays the root of each chord on each beat
+- [x] `to_midi()` returns usable `mido.MidiFile` object
 
 ---
 
@@ -445,13 +445,13 @@ with verse.drums(grid=1/16) as d:
     d.hihat("x.x.x.x.x.x.x.x.")
 ```
 
-### 2.6 Second Test Composition
-- [ ] Compose 16-bar piece with verse + chorus structure
-- [ ] Use multiple patterns across tracks
-- [ ] Use escape hatch for melody line
-- [ ] **Include drum track with rock_beat pattern**
+### 2.6 Second Test Composition ✅
+- [x] Compose 16-bar piece with verse + chorus structure
+- [x] Use multiple patterns across tracks
+- [x] Use escape hatch for melody line
+- [x] **Include drum track with rock_beat pattern**
 - [ ] Test live playback with looping
-- [ ] Verify all patterns sound correct
+- [x] Verify all patterns sound correct
 
 ### Test Composition (Phase 2)
 
@@ -497,15 +497,15 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 ```
 
 ### Exit Criteria
-- [ ] Can compose recognizable 16-bar piece
-- [ ] Multiple tracks with different patterns
-- [ ] Escape hatch works for literal melodies
-- [ ] All patterns produce correct MIDI output
-- [ ] `p.play()` plays audio through built-in synth
-- [ ] `p.loop()` loops playback until stopped
-- [ ] Custom `Synth` instruments work with configurable waveforms and envelopes
-- [ ] `InstrumentBank` allows per-role and per-track instrument assignment
-- [ ] `p.connect()` creates virtual MIDI port for DAW routing
+- [x] Can compose recognizable 16-bar piece
+- [x] Multiple tracks with different patterns
+- [x] Escape hatch works for literal melodies
+- [x] All patterns produce correct MIDI output
+- [x] `p.play()` plays audio through built-in synth
+- [x] `p.loop()` loops playback until stopped
+- [x] Custom `Synth` instruments work with configurable waveforms and envelopes
+- [x] `InstrumentBank` allows per-role and per-track instrument assignment
+- [x] `p.connect()` creates virtual MIDI port for DAW routing
 
 ---
 
