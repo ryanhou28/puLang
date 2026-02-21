@@ -509,9 +509,9 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 
 ---
 
-## Phase 3: Transforms and Event IR
+## Phase 3: Transforms, Score IR, and Event IR
 
-**Goal:** Prove the transform pipeline works. Introduce Event IR.
+**Goal:** Prove the transform pipeline works. Introduce Score IR (the missing middle layer) and Event IR, establishing the full three-tier compilation path.
 
 ### Architecture (Phase 3)
 
@@ -525,12 +525,21 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 │           Intent IR                     │
 │  pulang.ir.intent module               │
 └─────────────────┬───────────────────────┘
-                  │ transforms (optional)
+                  │ intent-level transforms (optional)
                   ▼
 ┌─────────────────────────────────────────┐
 │      Transformed Intent IR              │
 └─────────────────┬───────────────────────┘
-                  │ realize()
+                  │ lower_to_score() — voicing, voice leading
+                  ▼
+┌─────────────────────────────────────────┐
+│           Score IR (NEW)                │
+│  pulang.ir.score module                │
+│  Parts, Bars, Named pitches, Voices,   │
+│  Dynamics, Articulation                │
+└─────────────────┬───────────────────────┘
+                  │ score-level transforms (optional)
+                  │ lower_to_events() — performance interpretation
                   ▼
 ┌─────────────────────────────────────────┐
 │           Event IR (NEW)                │
@@ -543,7 +552,23 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 └─────────────────────────────────────────┘
 ```
 
-### 3.1 Event IR
+### 3.1 Score IR (NEW — The Missing Middle Layer)
+
+Module: `pulang.ir.score`
+
+Score IR captures realized musical content — specific pitches in specific voices with articulation and dynamics. This is the level at which music theory analysis operates.
+
+- [ ] Define `Score` dataclass (title, tempo, key, time_signature, parts, sections)
+- [ ] Define `Part` dataclass (name, role, instrument, bars)
+- [ ] Define `Bar` dataclass (number, key, time_signature, notes)
+- [ ] Define `ScoreNote` dataclass (pitch, beat, duration, dynamic, articulation, tie, voice)
+- [ ] Define `ScoreSection` dataclass (name, start_bar, end_bar)
+- [ ] Implement JSON serialization for all Score IR types
+- [ ] Implement `lower_to_score(piece: intent.Piece) -> Score` — Intent → Score lowering
+- [ ] Pattern realization produces Score IR bars (not Event IR events directly)
+- [ ] Voice leading decisions happen during Intent → Score lowering
+
+### 3.2 Event IR
 
 Module: `pulang.ir.event`
 
@@ -551,9 +576,12 @@ Module: `pulang.ir.event`
 - [ ] Define `RestEvent` dataclass (start, duration, track)
 - [ ] Define `ControlEvent` dataclass (control_type, value, time, track)
 - [ ] Define `EventStream` dataclass (tempo, time_signature, events)
-- [ ] Implement `realize(piece: ir.intent.Piece) -> EventStream`
+- [ ] Implement `lower_to_events(score: Score) -> EventStream` — Score → Event lowering
+- [ ] Implement dynamic → velocity mapping
+- [ ] Implement articulation → duration adjustment
 - [ ] Implement `emit_midi(events: EventStream) -> mido.MidiFile`
-- [ ] Refactor Phase 1-2 code to use Event IR internally
+- [ ] Refactor Phase 1-2 code to route through Score IR internally
+- [ ] Maintain backward-compatible `realize_to_midi()` that internally uses Intent → Score → Event
 
 ### 3.2 Transform Infrastructure
 - [ ] Define `Transform` protocol/interface
@@ -611,9 +639,11 @@ p.save_midi("with_transform.mid")
 ### Exit Criteria
 - [ ] Can create transformed section from existing section
 - [ ] Transform produces musically correct output
-- [ ] Pipeline is clean: DSL → Intent IR → Transform → Intent IR → Event IR → MIDI
+- [ ] Full pipeline works: DSL → Intent IR → Transform → Score IR → Event IR → MIDI
+- [ ] Score IR is inspectable: can see specific pitches per voice, bar by bar
 - [ ] Original section unchanged after transform
-- [ ] Event IR is serializable to JSON
+- [ ] Both Score IR and Event IR are serializable to JSON
+- [ ] Backward-compatible `realize_to_midi()` still works (routes through Score IR internally)
 
 ---
 
@@ -729,9 +759,9 @@ p.play()
 
 ---
 
-## Phase 5: Voice Leading Transform
+## Phase 5: Voice Leading Transform and Score-Level Passes
 
-**Goal:** The first "intelligent" transform.
+**Goal:** The first "intelligent" transform, operating on Score IR. First score-level analysis passes.
 
 ### 5.1 Voice Leading Algorithm
 - [ ] Research voice leading algorithms (constraint satisfaction, heuristics)
@@ -740,12 +770,18 @@ p.play()
 - [ ] Add parallel fifth/octave avoidance (optional flag)
 - [ ] Write tests for voice leading quality
 
-### 5.2 `voice_lead` Transform
-- [ ] Implement `voice_lead(max_leap=5, avoid_parallels=True)` transform
-- [ ] Operates on harmony tracks (role=HARMONY)
+### 5.2 `voice_lead` Transform (Score-Level)
+- [ ] Implement `voice_lead(max_leap=5, avoid_parallels=True)` as a Score IR transform pass
+- [ ] Operates on Score IR parts (not Intent IR tracks)
 - [ ] Preserves bass line (role=BASS)
-- [ ] Returns IR with optimized voicings
+- [ ] Returns new Score with optimized voicings
 - [ ] Write tests comparing before/after
+
+### 5.2b First Score-Level Analysis Passes
+- [ ] Implement `parallel_fifths_check` analysis pass — detect parallel fifths/octaves
+- [ ] Implement `range_check` analysis pass — check each part against standard ranges
+- [ ] Implement `voice_crossing_check` analysis pass — detect voice crossing
+- [ ] Analysis passes return structured results (location, severity, description)
 
 ### 5.3 Voicing Hints
 - [ ] Implement `.open()` method for open voicing
@@ -791,11 +827,11 @@ voiced_piece.save_midi("chorale_voiced.mid")
 
 ## Phase 6: MusicXML Backend
 
-**Goal:** Output to notation software.
+**Goal:** Output to notation software. Score IR makes this natural — it already has bar structure, named pitches, voices, dynamics, and articulation.
 
 ### 6.1 MusicXML Emitter
 - [ ] Research MusicXML format specification
-- [ ] Implement `emit_musicxml(events: EventStreamIR, path: str)`
+- [ ] Implement `emit_musicxml(score: Score, path: str)` — emit from Score IR (not Event IR)
 - [ ] Output basic elements: notes, rests
 - [ ] Output time signature
 - [ ] Output key signature
@@ -875,6 +911,39 @@ voiced_piece.save_midi("chorale_voiced.mid")
 ## Future Phases (Unscheduled)
 
 These are ideas, not commitments. Check off if/when implemented.
+
+### Dialect Framework and Pass Ecosystem
+
+**Goal:** Formalize the MLIR-inspired dialect framework so users can define their own dialects, passes, and lowering/lifting strategies.
+
+#### Dialect Framework Infrastructure
+- [ ] Define `Dialect` protocol (operations, types, validate)
+- [ ] Implement dialect registry
+- [ ] Implement pass registry (analysis passes, transform passes per dialect)
+- [ ] Implement lowering/lifting framework (dialect → dialect conversion)
+- [ ] Define `@dialect`, `@analysis_pass`, `@transform_pass` decorators
+- [ ] Pass composition: `pipe(pass1, pass2, pass3)` for chaining passes
+
+#### First Analytical Dialect: Counterpoint
+- [ ] Define counterpoint dialect operations (species, intervals, motion types, violations)
+- [ ] Implement lifting from Score IR to counterpoint dialect
+- [ ] Implement species identification
+- [ ] Implement parallel fifths/octaves detection (migrate from Score-level pass)
+- [ ] Implement voice independence analysis
+
+#### Style-Specific Lowering
+- [ ] Implement style parameter for Intent → Score lowering
+- [ ] `style="default"` — common-practice voice leading rules
+- [ ] `style="jazz"` — jazz voicing conventions (shell voicings, drop-2, rootless)
+- [ ] `style="baroque"` — figured bass realization conventions
+- [ ] Style-specific lowering as pluggable pass packages
+
+#### Pass Ecosystem
+- [ ] Document how to create and register custom passes
+- [ ] Document how to create and register custom dialects
+- [ ] Support `pip install pulang-<dialect>` pattern for community dialects
+- [ ] Example: `pulang-schenkerian` — Schenkerian analysis dialect
+- [ ] Example: `pulang-settheory` — pitch class set theory dialect
 
 ### Sampled Instruments and Advanced Playback
 
@@ -1012,7 +1081,8 @@ These are out of scope. Other tools do them better.
 |----------|-----------|
 | Dual-syntax (pyPuLang + puLang) | Accessibility for musicians + power for programmers |
 | pyPuLang first, puLang later | Iterate on semantics before committing to parser |
-| Two-tier IR (Intent + Event) | Simpler than three dialects, can expand later |
+| Three-tier IR (Intent + Score + Event) | Score IR fills the gap between compositional intent and performance events — captures voice leading, voicing, articulation, dynamics; where music theory analysis lives |
+| Dialect framework (MLIR-inspired) | Extensible IR architecture: standard dialects (Intent/Score/Event) + user-defined analytical and style dialects |
 | JSON serialization for IR | Human-readable, universal, AI-friendly |
 | Fractions for timing | Exact representation, no rounding errors |
 | Intent IR bar-relative, Event IR piece-relative | Match mental models at each layer |
@@ -1026,6 +1096,7 @@ These are out of scope. Other tools do them better.
 | Strict error handling | Fail fast on structural errors |
 | Warn on role-based octave inference | User should know when magic happens |
 | Defer Event IR to Phase 3 | Simpler Phase 1; Event IR needed for transforms, not basic emission |
+| Defer Score IR to Phase 3 | Score IR is the new middle layer; introduced alongside Event IR when the full pipeline is built |
 | Direct MIDI emission in Phase 1 | Faster path to sound; `realize_to_midi()` skips Event IR layer |
 | Built-in live playback via rtmidi | Rapid prototyping requires instant feedback; file-based playback too slow |
 | Layered playback: system synth → virtual port → FluidSynth | Simple default, pro DAW integration, standalone option |

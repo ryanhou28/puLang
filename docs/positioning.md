@@ -83,9 +83,10 @@ This is Gap #2: **No rapid, programmable composition language.**
 puLang is:
 - **A composition language** — for sketching musical ideas
 - **Intent-first** — you declare what you want, not every note
-- **IR-centric** — lowers to intermediate representations that can be transformed
+- **Multi-level IR** — lowers through three tiers (Intent → Score → Event) that can each be analyzed and transformed
+- **Dialect framework** — extensible IR architecture inspired by MLIR; standard dialects for composition, analysis for musicology
 - **Dual-syntax** — Python-embedded (pyPuLang) and standalone (puLang)
-- **Transform-friendly** — musical material can be analyzed and modified programmatically
+- **Pass-driven** — musical material can be analyzed and modified at every level through composable passes
 
 ### Primary Granularity
 
@@ -152,7 +153,10 @@ Developers building:
 ## Target Workflow
 
 ```
-Idea → Intent (puLang) → IR → Transforms → Audition → Refine → Export
+Idea → Intent (puLang) → Score (realized) → Events (performance) → Audition → Refine → Export
+           ↕ passes           ↕ passes            ↕ passes
+    (reharmonize,       (voice leading,      (humanize,
+     transpose)          counterpoint)        swing)
 ```
 
 Compared to traditional:
@@ -160,16 +164,17 @@ Compared to traditional:
 Idea → Notes → Performance → Rewrite → Frustration
 ```
 
-The key difference: **you can refactor, transform, and iterate at the intent level** before committing to specific notes.
+The key difference: **you can analyze and transform at every level** — harmonic structure (Intent), voice leading (Score), and performance (Event) — rather than working at a single level.
 
 ---
 
 ## Differentiation
 
 ### vs music21
-- music21 is a **library**; puLang is a **language**
-- music21 is for **analysis**; puLang is for **generation**
-- music21 operates on notes; puLang operates on intent
+- music21 is a **library**; puLang is a **language with a multi-level IR**
+- music21 is for **analysis at one level**; puLang enables analysis and generation at **three levels** (Intent, Score, Event)
+- music21 operates on notes; puLang operates on intent and lowers to notes through explicit, configurable steps
+- puLang's dialect framework could eventually interop with music21 (music21 operates roughly at Score IR level)
 
 ### vs LilyPond
 - LilyPond is for **final engraving**; puLang is for **pre-engraving exploration**
@@ -187,26 +192,31 @@ The key difference: **you can refactor, transform, and iterate at the intent lev
 
 ---
 
-## The Killer Feature: Transformability
+## The Killer Feature: Multi-Level Passes
 
-Because puLang lowers to IR, you can apply transforms:
+Because puLang lowers through **three IR levels** — Intent, Score, and Event — you can apply analysis and transforms at whichever level is natural:
 
 ```python
+# Intent-level: transform harmonic structure
 chorus = verse.transform(
     reharmonize="modal_interchange",
     density=1.3,
     register=+1
 )
+
+# Score-level: analyze and transform realized music
+score = p.to_score()  # Lower Intent → Score
+analysis = score.analyze(parallel_fifths_check)  # Score-level analysis
+score = score.transform(voice_lead(max_leap=4))  # Score-level transform
+
+# Event-level: transform performance
+events = score.to_events()  # Lower Score → Event
+events = events.transform(humanize(amount=0.1))  # Event-level transform
 ```
 
-```python
-piece.apply(
-    voice_leading(max_leap=5),
-    thin_texture(except_role="melody")
-)
-```
+These are **compiler passes**, not ad-hoc scripts. And like MLIR, the dialect framework is extensible — musicologists can define their own dialects (Schenkerian, set theory, counterpoint) with their own passes.
 
-These are **compiler passes**, not ad-hoc scripts. This is the door no existing tool opens.
+The lowering process itself is a **musicological statement**: how you go from "V7 chord" to specific voicings encodes centuries of voice leading pedagogy. Different eras and styles have different rules, and puLang makes these decisions **explicit, inspectable, and configurable**.
 
 ---
 

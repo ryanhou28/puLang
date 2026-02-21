@@ -100,13 +100,14 @@ Underspecified. `rate=1/16` is fine for arpeggios, but how to express:
 
 This is where most music DSLs get messy.
 
-#### c) The harmony → notes gap
+#### c) The harmony → notes gap (Addressed in v0.2)
 `I, V, vi, IV` is great, but *which* voicing? *Which* octave? *Which* inversion?
 
-Need either:
-- Smart defaults (risky — taste-dependent)
-- Explicit voicing hints (`I.open()`, `V.close()`, etc.)
-- A voice-leading pass (complex)
+**Resolution:** Score IR explicitly captures these decisions. The Intent → Score lowering makes voicing and voice leading choices, and Score IR preserves them as inspectable, analyzable, transformable data. Users can:
+- Inspect Score IR to see exactly which voicings were chosen
+- Apply score-level passes to optimize voice leading
+- Configure lowering style (default, jazz, baroque) for different voicing conventions
+- Override with explicit voicing hints (`I.open()`, `V.close()`, etc.)
 
 ---
 
@@ -115,34 +116,29 @@ Need either:
 ### What's Correct
 IR-centric architecture separating:
 - Frontends (pyPuLang Python DSL + puLang standalone syntax)
-- IR (Intent IR, Event IR)
+- IR (three-tier: Intent IR, Score IR, Event IR)
+- Passes (analysis + transform at each level)
 - Backends (MIDI, MusicXML, audio)
 
 This enables transform passes that make the language interesting.
 
-### Concerns
+### Resolved: IR Granularity (v0.2 Update)
 
-#### a) IR granularity
-Proposed three dialects: Harmony IR, Pattern IR, Event IR
+Originally recommended two tiers (Intent + Event). In v0.2, we moved to **three tiers** (Intent + Score + Event) because the gap between intent and events was too large. Score IR fills the middle layer where music theory analysis lives — voice leading, voicing, counterpoint, articulation, dynamics.
 
-But what about:
-- Structure IR (sections, repeats, form)?
-- Texture IR (roles, density, register)?
-- Articulation IR (dynamics, phrasing)?
+The architecture is now built on an **MLIR-inspired dialect framework**: the three standard dialects (Intent, Score, Event) provide the core compilation path, but the framework supports user-defined dialects for specialized analysis (Schenkerian, set theory, counterpoint) and style-specific conventions (jazz voicings, Baroque ornaments).
 
-**Recommendation:** Start with just two:
-- **Intent IR** (harmony, patterns, structure, texture — all the "what")
-- **Event IR** (concrete notes/durations that actually play)
+See [ir-spec.md](ir-spec.md) for the full dialect framework specification.
 
-#### b) Transform pass ordering
-Compiler passes have dependencies. In:
-```python
-piece.apply(
-    voice_leading(max_leap=5),
-    thin_texture(except="melody")
-)
-```
-Does order matter? (Yes.) How to handle? Needs design thought.
+### Partially Resolved: Transform pass ordering
+Compiler passes have dependencies. In v0.2, passes naturally partition by IR level:
+1. Intent-level passes (harmonic transforms) run first
+2. Lowering to Score (voicing, voice leading decisions)
+3. Score-level passes (voice leading optimization, ornamentation)
+4. Lowering to Event (performance interpretation)
+5. Event-level passes (humanize, swing)
+
+Within a single level, ordering is still explicit (user-specified). Dependency-based ordering is a future enhancement.
 
 ---
 
@@ -152,11 +148,16 @@ Does order matter? (Yes.) How to handle? Needs design thought.
 - Keep IR serializable (JSON/protobuf/etc.)
 - Keep constructs semantically clear (a `Chord` should mean a chord, not "some notes")
 - Avoid puLang-specific constructs in IR — IR should be language-agnostic
+- Dialect framework should be open — third-party dialects should be first-class
+
+### Addressed in v0.2
+- Score IR provides a natural bridge to MusicXML and music21 (both operate at roughly the same level)
+- Dialect framework provides extensibility without modifying core
 
 ### Defer
 - Multi-instrument orchestration semantics
 - Audio-level representation
-- Notation-level representation (layout, beaming)
+- Notation-level representation (layout, beaming — Score IR is *moderate* granularity, not a notation format)
 
 ---
 

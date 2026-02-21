@@ -4,9 +4,11 @@
 
 puLang uses a **compiler-style architecture** with clear separation between:
 - **Frontends** — pyPuLang (Python DSL) and puLang (standalone syntax)
-- **IR (Intermediate Representation)** — the musical data structures
-- **Transforms** — passes that analyze or modify the IR
+- **IR (Intermediate Representation)** — a three-tier dialect system for representing music at different levels of abstraction
+- **Passes** — analysis and transformation at each IR level
 - **Backends** — emitters to MIDI, MusicXML, audio, etc.
+
+The architecture is built on a **dialect framework** inspired by MLIR: rather than hardcoding fixed IR levels, puLang provides infrastructure for defining dialects, passes, and lowering/lifting rules. The three standard dialects — Intent, Score, and Event — are shipped with puLang, but the framework supports user-defined dialects for specialized analysis or style-specific conventions.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -18,34 +20,84 @@ puLang uses a **compiler-style architecture** with clear separation between:
                               │
                               ▼ lowering
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Intent IR                               │
-│   Sections, Harmony, Patterns, Tracks, Roles                   │
+│                         Intent IR                                │
+│   Sections, Harmony (Roman numerals), Patterns, Tracks, Roles   │
+│   ← intent-level passes: harmonic analysis, form detection,     │
+│     reharmonization, transposition, modulation                  │
 └─────────────────────────────────────────────────────────────────┘
                               │
-                              ▼ transforms (optional)
+                              ▼ lowering (voicing, voice leading, pattern realization)
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Transform Pipeline                         │
-│   reharmonize, voice_lead, thin_texture, transpose, ...        │
+│                         Score IR                                 │
+│   Parts, Bars, Named pitches, Voices, Dynamics, Articulation    │
+│   ← score-level passes: voice leading analysis, counterpoint,   │
+│     melodic contour, texture analysis, ornamentation            │
 └─────────────────────────────────────────────────────────────────┘
                               │
-                              ▼ realization
+                              ▼ lowering (performance interpretation)
 ┌─────────────────────────────────────────────────────────────────┐
-│                          Event IR                               │
-│   Concrete notes, durations, velocities, timings               │
+│                          Event IR                                │
+│   Concrete MIDI-like events, absolute timing, velocities        │
+│   ← event-level passes: humanize, quantize, swing, groove       │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼ emission
 ┌─────────────────────────────────────────────────────────────────┐
-│                          Backends                               │
+│                          Backends                                │
 │   MIDI  │  MusicXML  │  Audio  │  JSON  │  LilyPond  │  ...    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
+## The Dialect Framework
+
+The architecture's core innovation is treating IR levels as **dialects** within a common framework, rather than ad-hoc data structures. This design is inspired by MLIR (Multi-Level Intermediate Representation) from the compiler world.
+
+### What is a Dialect?
+
+A dialect is a named collection of:
+- **Operations** — the data types that represent musical things (notes, chords, sections, events)
+- **Types** — how fundamental musical concepts are represented (pitches, durations, intervals)
+- **Passes** — analysis and transformation functions that operate on this dialect
+- **Lowering rules** — how to convert from this dialect to a lower-level one
+- **Lifting rules** — how to convert from a lower-level dialect to this one (analysis)
+
+### Standard Dialects
+
+puLang ships three standard dialects:
+
+| Dialect | Module | Captures | Pitch | Timing |
+|---------|--------|----------|-------|--------|
+| **Intent** | `pulang.ir.intent` | Compositional intent | Roman numerals | Bar counts |
+| **Score** | `pulang.ir.score` | Realized musical content | Scientific notation ("C#4") | Bar-relative beats |
+| **Event** | `pulang.ir.event` | Performance events | MIDI integers (0-127) | Piece-relative beats |
+
+### Why Three Levels?
+
+Each level captures music at a different level of abstraction, matching how different people think about music:
+
+- **Intent** = how a **composer plans**: "I want a I-IV-V-I progression with arpeggiated piano"
+- **Score** = how a **music theorist analyzes**: "The soprano moves E5→F5→D5→E5 with stepwise motion"
+- **Event** = how a **performer/machine executes**: "Play MIDI note 64 at beat 0 for 1 beat at velocity 80"
+
+The gap between Intent and Event was too large. Score IR fills this gap by making voice leading decisions, voicing choices, and expressive markings **explicit, inspectable, and transformable** — rather than burying them inside a monolithic lowering function.
+
+### Extensible Dialects
+
+The framework supports user-defined dialects for specialized purposes:
+
+- **Analytical dialects**: Schenkerian analysis, set theory, counterpoint species
+- **Style dialects**: Jazz voicings, Baroque ornaments, Romantic expression
+- **Domain dialects**: Film scoring, game audio, educational exercises
+
+See [ir-spec.md](ir-spec.md) for detailed dialect specifications and examples.
+
+---
+
 ## Layer 1: Frontends
 
-puLang has two frontends that emit identical IR.
+puLang has two frontends that emit identical Intent IR.
 
 ### pyPuLang (Python-embedded DSL)
 
@@ -163,62 +215,99 @@ class NotesIR:
 3. **Roles, not just names** — "bass" vs "melody" affects voice leading
 4. **Serializable** — Can be saved as JSON, shared, versioned
 
+### Intent-Level Passes
+
+**Analysis passes** operate on Intent IR to understand compositional structure:
+- Harmonic function analysis (tonic, predominant, dominant classification)
+- Form analysis (binary, ternary, sonata, rondo, verse-chorus detection)
+- Harmonic rhythm analysis (chord change rate relative to meter)
+- Modulation detection (key center shifts, pivot chords)
+
+**Transform passes** modify Intent IR:
+- Reharmonization (modal interchange, tritone substitution, secondary dominants)
+- Transposition (shift key center)
+- Modulation (introduce key change with pivot chord)
+- Restructure (reorder, duplicate, or remove sections)
+
 ---
 
-## Layer 3: Transform Pipeline
+## Layer 3: Score IR
 
 ### Design Principle
-Transforms are **pure functions** that take IR and return IR. They can be composed and ordered.
+Represents **realized musical content** — the specific pitches, voices, articulations, and dynamics that result from lowering Intent IR. This is where music theory analysis traditionally operates.
 
-### Transform Types
+### Core Types
 
-#### Harmonic Transforms
 ```python
-def reharmonize(ir: SectionIR, strategy: str) -> SectionIR:
-    """Replace chords using substitution strategies."""
-    # modal_interchange, tritone_sub, secondary_dominant, etc.
+@dataclass
+class Score:
+    title: str | None
+    tempo: float
+    key: Key
+    time_signature: TimeSignature
+    parts: list[Part]
+    sections: list[ScoreSection]
 
-def transpose(ir: PieceIR, interval: int) -> PieceIR:
-    """Transpose entire piece."""
+@dataclass
+class Part:
+    name: str
+    role: str | None
+    instrument: str | int
+    bars: list[Bar]
 
-def modulate(ir: SectionIR, to_key: Key, pivot: RomanNumeral) -> SectionIR:
-    """Introduce modulation."""
+@dataclass
+class Bar:
+    number: int
+    key: Key | None
+    time_signature: TimeSignature | None
+    notes: list[ScoreNote]
+
+@dataclass
+class ScoreNote:
+    pitch: str              # "C4", "F#5", "rest"
+    beat: str               # Bar-relative beat position
+    duration: str           # Duration in beats
+    dynamic: str | None     # "pp" through "fff"
+    articulation: str | None  # "staccato", "legato", etc.
+    tie: str | None         # "start", "end", "continue"
+    voice: int              # Voice number within part
 ```
 
-#### Textural Transforms
-```python
-def thin_texture(ir: SectionIR, except_roles: list[Role]) -> SectionIR:
-    """Reduce density by removing notes."""
+### Key Design Decisions
 
-def thicken_texture(ir: SectionIR, strategy: str) -> SectionIR:
-    """Add doublings, fill voicings."""
+1. **Named pitches, not MIDI numbers** — Preserves enharmonic spelling, human-readable
+2. **Bar-relative timing** — Matches how musicians think ("beat 3 of bar 2")
+3. **Explicit voices** — Every note belongs to a voice, enabling counterpoint analysis
+4. **Dynamics and articulation** — Expressive markings preserved for analysis and Score → Event lowering
+5. **Moderate granularity** — Enough for theory analysis and MusicXML export; not a notation format (no beaming, stem direction, layout)
 
-def change_register(ir: TrackIR, octaves: int) -> TrackIR:
-    """Shift up/down."""
-```
+### Score-Level Passes
 
-#### Voice Leading Transforms
-```python
-def voice_lead(ir: SectionIR, max_leap: int = 4) -> SectionIR:
-    """Apply voice leading rules to chord voicings."""
+**Analysis passes** — the heart of music theory analysis:
+- Voice leading analysis (parallel fifths/octaves, tendency tone resolution, voice crossing)
+- Counterpoint analysis (species identification, voice independence, dissonance treatment)
+- Melodic contour analysis (shape classification, interval content)
+- Texture analysis (homophonic, polyphonic, monophonic, homorhythmic; density)
+- Range analysis (per-voice, against standard SATB/instrument ranges)
+- Register analysis (voice spacing, registral gaps)
 
-def smooth_bass(ir: TrackIR) -> TrackIR:
-    """Minimize bass movement."""
-```
+**Transform passes**:
+- Voice leading optimization (minimize movement, resolve tendency tones, avoid parallels)
+- Add ornamentation (passing tones, neighbor tones, suspensions, anticipations)
+- Apply articulation (staccato, legato, accents based on style rules)
+- Adjust dynamics (dynamic curves, phrasing dynamics)
+- Change voicing (close, open, drop-2, spread)
+- Orchestrate (assign voices to instruments with idiomatic adjustments)
 
-### Transform Ordering
+### Lowering: Intent → Score
 
-Transforms may have dependencies:
-1. Harmonic transforms first (change the chords)
-2. Voice leading second (determine voicings)
-3. Textural transforms third (adjust density)
-4. Register transforms last (shift octaves)
+This is where the critical musical decisions happen:
+- **Chord voicing**: Which octave, which inversion, open vs close position
+- **Voice leading**: How voices move between chords
+- **Pattern realization**: How "arp up" becomes specific notes in specific voices
+- **Style conventions**: Baroque continuo realization vs jazz voicings vs Romantic part-writing
 
-The pipeline should either:
-- Enforce ordering constraints
-- Or let the user specify order explicitly
-
-**Phase 1:** Explicit user ordering. Implicit ordering is a future enhancement.
+The lowering process is **configurable by style** — different styles encode different musicological conventions. This makes the lowering itself a musicological statement that can be inspected, debated, and swapped.
 
 ---
 
@@ -257,22 +346,28 @@ class ControlEvent:
     time: Fraction
 ```
 
-### Realization: Intent IR → Event IR
+### Event-Level Passes
 
-This is where patterns become notes:
+**Analysis passes**:
+- Groove analysis (timing deviations, swing ratio)
+- Dynamics analysis (velocity curves, dynamic range)
+- Articulation detection (staccato vs legato from note overlap)
+- Density analysis (notes per beat over time)
 
-```python
-def realize(intent: PieceIR) -> EventIR:
-    """Convert Intent IR to Event IR."""
-    events = []
-    for section in intent.sections:
-        for track in section.tracks:
-            if isinstance(track.content, PatternIR):
-                events.extend(realize_pattern(track, section.harmony))
-            elif isinstance(track.content, NotesIR):
-                events.extend(realize_notes(track))
-    return EventIR(events=events, tempo=intent.tempo, ...)
-```
+**Transform passes**:
+- Humanize (add timing/velocity variation)
+- Quantize (snap to rhythmic grid)
+- Apply swing (offset alternating subdivisions)
+- Compress dynamics (narrow/expand velocity range)
+- Time-stretch (scale all timings)
+
+### Lowering: Score → Event
+
+This is where notation becomes performance:
+- **Dynamic → velocity**: "forte" becomes velocity 96
+- **Articulation → duration**: "staccato" shortens to ~50%
+- **Named pitch → MIDI**: "C#4" becomes 61
+- **Bar-relative → absolute**: Bar 3, beat 2 becomes beat 10
 
 ### Design Decisions
 
@@ -297,14 +392,21 @@ def emit_midi(events: EventIR, path: str) -> None:
 
 ### MusicXML Backend
 ```python
-def emit_musicxml(events: EventIR, path: str) -> None:
-    """Write to MusicXML for notation software."""
+def emit_musicxml(score: Score, path: str) -> None:
+    """Write to MusicXML for notation software.
+
+    Note: MusicXML export works best from Score IR (not Event IR)
+    since Score IR preserves bar structure, voices, and articulations.
+    """
 ```
 
 ### JSON Backend
 ```python
-def emit_json(ir: PieceIR | EventIR, path: str) -> None:
-    """Serialize IR for debugging/interchange."""
+def emit_json(ir: Piece | Score | EventIR, path: str) -> None:
+    """Serialize IR for debugging/interchange.
+
+    Can serialize any dialect level.
+    """
 ```
 
 ### Audio Backend (Future)
@@ -312,6 +414,118 @@ def emit_json(ir: PieceIR | EventIR, path: str) -> None:
 def emit_audio(events: EventIR, path: str, soundfont: str) -> None:
     """Render to audio using FluidSynth or similar."""
 ```
+
+---
+
+## Passes Architecture
+
+Passes are first-class citizens in puLang's architecture. They are the primary mechanism for both analysis and transformation of music.
+
+### Pass Categories
+
+| Category | Input | Output | Purpose |
+|----------|-------|--------|---------|
+| **Analysis** | IR (any dialect) | Analysis results | Understand musical structure |
+| **Transform** | IR (any dialect) | New IR (same dialect) | Modify musical content |
+| **Lowering** | IR (higher dialect) | IR (lower dialect) | Compile toward performance |
+| **Lifting** | IR (lower dialect) | IR (higher dialect) | Analyze / reverse-engineer |
+
+### Pass Design Principles
+
+1. **Pure functions** — Passes take IR and return results/new IR. No mutation.
+2. **Composable** — Passes can be chained into pipelines.
+3. **Dialect-aware** — Each pass declares which dialect(s) it operates on.
+4. **Configurable** — Passes accept parameters for different strategies.
+5. **Registerable** — Custom passes can be added to the framework.
+
+### Lowering as Musicological Statement
+
+The lowering process between dialects is not mechanical — it encodes deep musicological knowledge:
+
+**Intent → Score lowering** encodes voice leading pedagogy, voicing conventions, and style-period norms. A Baroque continuo realization is fundamentally different from a jazz comping pattern, even for the same chord progression. By making lowering configurable by style, puLang makes these decisions **explicit and debatable**.
+
+**Score → Event lowering** encodes performance practice. How long is "staccato"? What velocity is "forte"? How should rubato feel? These are interpretive decisions that vary by performer, era, and tradition.
+
+### Lifting as Analysis
+
+Passes can go **up** as well as down — this is what musicologists do:
+
+- **Event → Score** (transcription): Infer notation from a MIDI performance
+- **Score → Intent** (harmonic analysis): Infer Roman numerals from specific pitches
+- **Score → analytical dialect**: Schenkerian reduction, set-theoretic analysis, etc.
+
+Lifting is inherently interpretive. Multiple valid analyses may exist. The framework supports this by allowing multiple lifting strategies and ranked results.
+
+---
+
+## Transform Pipeline
+
+### Design Principle
+Transforms are **pure functions** that take IR and return IR. They can be composed and ordered.
+
+### Transform Types
+
+#### Harmonic Transforms (Intent-level)
+```python
+def reharmonize(ir: SectionIR, strategy: str) -> SectionIR:
+    """Replace chords using substitution strategies."""
+    # modal_interchange, tritone_sub, secondary_dominant, etc.
+
+def transpose(ir: PieceIR, interval: int) -> PieceIR:
+    """Transpose entire piece."""
+
+def modulate(ir: SectionIR, to_key: Key, pivot: RomanNumeral) -> SectionIR:
+    """Introduce modulation."""
+```
+
+#### Voice Transforms (Score-level)
+```python
+def voice_lead(score: Score, max_leap: int = 4) -> Score:
+    """Optimize voice leading across chord changes."""
+
+def add_ornaments(score: Score, style: str = "baroque") -> Score:
+    """Insert passing tones, neighbor tones, suspensions."""
+
+def change_voicing(score: Score, voicing: str = "open") -> Score:
+    """Switch between close, open, drop-2, spread voicings."""
+```
+
+#### Textural Transforms (Score-level)
+```python
+def thin_texture(score: Score, except_roles: list[Role]) -> Score:
+    """Reduce density by removing notes."""
+
+def thicken_texture(score: Score, strategy: str) -> Score:
+    """Add doublings, fill voicings."""
+
+def change_register(score: Score, octaves: int) -> Score:
+    """Shift up/down."""
+```
+
+#### Performance Transforms (Event-level)
+```python
+def humanize(events: EventIR, amount: float = 0.1) -> EventIR:
+    """Add subtle timing/velocity variation."""
+
+def apply_swing(events: EventIR, ratio: float = 0.67) -> EventIR:
+    """Offset alternating subdivisions."""
+```
+
+### Transform Ordering
+
+Transforms may have dependencies:
+1. Harmonic transforms first (change the chords) — Intent level
+2. Lowering to Score (realize voicings)
+3. Voice leading transforms (optimize movement) — Score level
+4. Textural transforms (adjust density) — Score level
+5. Lowering to Event (performance interpretation)
+6. Performance transforms (humanize, swing) — Event level
+
+The pipeline should either:
+- Enforce ordering constraints
+- Or let the user specify order explicitly
+
+**Phase 1:** Explicit user ordering. Implicit ordering is a future enhancement.
 
 ---
 
@@ -499,44 +713,6 @@ class Synth(Instrument):
 - `SynthPad`: Triangle wave, slow attack, long release
 - `SynthLead`: Square wave, fast attack, medium sustain
 
-### SampledInstrument (Future)
-
-Bundled sample-based instruments with multi-velocity layers.
-
-```python
-class SampledInstrument(Instrument):
-    """Pre-packaged sample-based instrument."""
-
-    def __init__(self, name: str):
-        """Load bundled instrument by name.
-
-        Available instruments: "piano", "bass", "strings", "pad"
-        """
-        ...
-```
-
-### Sampler (Future)
-
-User-defined sampler for custom sample libraries.
-
-```python
-class Sampler(Instrument):
-    """User-defined sampler with custom samples."""
-
-    def __init__(
-        self,
-        sample_map: dict[int | tuple[int, int], Path],
-        velocity_layers: int = 1,
-    ):
-        """Create sampler from user-provided samples.
-
-        Args:
-            sample_map: Maps MIDI pitch (or pitch range) to sample file
-            velocity_layers: Number of velocity layers per pitch
-        """
-        ...
-```
-
 ### InstrumentBank
 
 Manages instrument assignment to tracks.
@@ -546,19 +722,6 @@ class InstrumentBank:
     """Maps roles and track names to instruments."""
 
     def __init__(self, mapping: dict[Role | str, Instrument]):
-        """Create instrument bank.
-
-        Args:
-            mapping: Maps Role enums or track names to Instrument instances.
-                     Track names take precedence over roles.
-
-        Example:
-            InstrumentBank({
-                Role.BASS: Synth(waveform="saw", cutoff=400),
-                Role.HARMONY: Synth(waveform="triangle"),
-                "lead": Synth(waveform="square"),  # Track name override
-            })
-        """
         ...
 
     def get_instrument(self, track_name: str, role: Role | None) -> Instrument:
@@ -604,10 +767,15 @@ def my_pattern(harmony: HarmonyIR, params: dict) -> list[NoteEvent]:
     ...
 ```
 
-### Custom Transforms
+### Custom Passes
 ```python
-@transform
-def my_transform(ir: SectionIR, **kwargs) -> SectionIR:
+@analysis_pass(dialect="score")
+def my_analysis(score: Score) -> AnalysisResult:
+    """User-defined analysis pass."""
+    ...
+
+@transform_pass(dialect="intent")
+def my_transform(piece: Piece, **kwargs) -> Piece:
     """User-defined transform pass."""
     ...
 ```
@@ -620,27 +788,37 @@ def my_backend(events: EventIR, path: str) -> None:
     ...
 ```
 
----
-
-## Future: Music IR Compatibility
-
-The architecture is designed to evolve toward a shared Music IR:
-
-1. **Intent IR** becomes a dialect of Music IR
-2. **Event IR** becomes another dialect
-3. Transforms become passes in the Music IR ecosystem
-4. Other tools can emit/consume the same IR
-
-This requires:
-- IR serialization format (JSON Schema, Protobuf)
-- Clear semantic definitions
-- Language-agnostic IR design (no Python-isms in the IR)
+### Custom Dialects
+```python
+@dialect("my_dialect")
+class MyDialect:
+    """User-defined analytical or style dialect."""
+    operations = [...]
+    types = [...]
+    lifts_from = ["score"]  # Which dialects it can be produced from
+    lowers_to = ["score"]   # Which dialects it can produce
+```
 
 ---
 
 ## Design Decisions
 
 Key architectural decisions and their rationale.
+
+### Three-Tier IR: Intent, Score, Event
+
+- Two tiers (Intent → Event) had too large a semantic gap
+- Score IR captures voice leading, voicing, articulation, and dynamics — where music theory lives
+- Each tier has its own natural pitch representation (Roman numerals → named pitches → MIDI) and timing (bar counts → bar-relative beats → absolute beats)
+- Enables analysis passes at the level where they're most natural (counterpoint at Score level, harmonic function at Intent level, groove at Event level)
+
+### Dialect Framework (MLIR-Inspired)
+
+- Fixed IR levels would require modifying core code for every new analytical perspective
+- Framework approach lets musicologists define their own dialects without touching puLang core
+- Standard dialects (Intent/Score/Event) provide the common compilation path
+- Analytical dialects (Schenkerian, set theory, counterpoint) provide specialized views
+- Style dialects (jazz, Baroque) provide specialized lowering strategies
 
 ### Serialization: JSON
 
@@ -652,7 +830,8 @@ Key architectural decisions and their rationale.
 ### Timing: Fractions (Exact Rationals)
 
 - Use `fractions.Fraction` for exact beat positions (no rounding errors with triplets)
-- **Intent IR:** Bar-relative (matches how musicians think)
+- **Intent IR:** Abstract (bar counts, beat durations)
+- **Score IR:** Bar-relative (matches how musicians think)
 - **Event IR:** Piece-relative beats (simpler for backends)
 
 ### Pitch Representation
@@ -660,7 +839,8 @@ Key architectural decisions and their rationale.
 | Layer | Representation | Example |
 |-------|----------------|---------|
 | pyPuLang DSL | `Pitch` objects (int subclass) | `C4`, `C4 + 2` |
-| Intent IR | Scientific notation strings | `"C#4"` |
+| Intent IR | Roman numerals / pattern types | `"V"`, `"arp"` |
+| Score IR | Scientific notation strings | `"C#4"` |
 | Event IR | MIDI integers | `60` |
 
 ### Error Handling: Strict
@@ -708,6 +888,13 @@ verse.track("bass", pattern=root_eighths, octave=-2)
 - **`InstrumentBank`** — Maps roles/names to instruments
 - **Sensible defaults** — Each role has a default synth preset
 
+### Backward Compatibility: Direct Intent → Event Path
+
+- Existing code that goes Intent → Event directly will continue to work
+- Internally, direct lowering will route through Score IR (Intent → Score → Event)
+- Users can access Score IR at any point for analysis or transformation
+- No breaking changes to existing pyPuLang API
+
 ---
 
 ## Implementation Order
@@ -716,8 +903,11 @@ verse.track("bass", pattern=root_eighths, octave=-2)
 2. **Intent IR + Realization** — Get patterns working
 3. **One transform** — Prove the pipeline
 4. **pyPuLang DSL** — Make it pleasant to write
-5. **Additional backends** — MusicXML, audio
-6. **Additional transforms** — Build the library
-7. **puLang standalone syntax** — Parser and frontend (after pyPuLang stabilizes)
+5. **Score IR + two-step lowering** — Make the middle layer real
+6. **Score-level passes** — Voice leading analysis, counterpoint checks
+7. **Additional backends** — MusicXML (from Score IR), audio
+8. **Additional transforms** — Build the library at each level
+9. **Dialect framework** — Make the extension mechanism formal
+10. **puLang standalone syntax** — Parser and frontend (after pyPuLang stabilizes)
 
-This order ensures we have working, audible output at each stage.
+This order ensures we have working, audible output at each stage, and the most valuable additions (Score IR and passes) come before the more speculative framework work.
