@@ -511,7 +511,7 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 
 ## Phase 3: Transforms, Score IR, and Event IR
 
-**Goal:** Prove the transform pipeline works. Introduce Score IR (the missing middle layer) and Event IR, establishing the full three-tier compilation path.
+**Goal:** Prove the transform pipeline works. Introduce Score IR and Event IR, establishing the full three-tier compilation path.
 
 ### Architecture (Phase 3)
 
@@ -533,7 +533,7 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
                   │ lower_to_score() — voicing, voice leading
                   ▼
 ┌─────────────────────────────────────────┐
-│           Score IR (NEW)                │
+│           Score IR                      │
 │  pulang.ir.score module                │
 │  Parts, Bars, Named pitches, Voices,   │
 │  Dynamics, Articulation                │
@@ -542,7 +542,7 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
                   │ lower_to_events() — performance interpretation
                   ▼
 ┌─────────────────────────────────────────┐
-│           Event IR (NEW)                │
+│           Event IR                      │
 │  pulang.ir.event module                │
 └─────────────────┬───────────────────────┘
                   │ emit_midi()
@@ -552,7 +552,7 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 └─────────────────────────────────────────┘
 ```
 
-### 3.1 Score IR (NEW — The Missing Middle Layer)
+### 3.1 Score IR
 
 Module: `pulang.ir.score`
 
@@ -581,7 +581,7 @@ Module: `pulang.ir.event`
 - [ ] Implement articulation → duration adjustment
 - [ ] Implement `emit_midi(events: EventStream) -> mido.MidiFile`
 - [ ] Refactor Phase 1-2 code to route through Score IR internally
-- [ ] Maintain backward-compatible `realize_to_midi()` that internally uses Intent → Score → Event
+- [ ] Provide convenience `realize_to_midi()` that internally routes through Intent → Score → Event
 
 ### 3.2 Transform Infrastructure
 - [ ] Define `Transform` protocol/interface
@@ -643,7 +643,7 @@ p.save_midi("with_transform.mid")
 - [ ] Score IR is inspectable: can see specific pitches per voice, bar by bar
 - [ ] Original section unchanged after transform
 - [ ] Both Score IR and Event IR are serializable to JSON
-- [ ] Backward-compatible `realize_to_midi()` still works (routes through Score IR internally)
+- [ ] Convenience `realize_to_midi()` works (routes through Score IR internally)
 
 ---
 
@@ -1096,7 +1096,7 @@ These are out of scope. Other tools do them better.
 | Strict error handling | Fail fast on structural errors |
 | Warn on role-based octave inference | User should know when magic happens |
 | Defer Event IR to Phase 3 | Simpler Phase 1; Event IR needed for transforms, not basic emission |
-| Defer Score IR to Phase 3 | Score IR is the new middle layer; introduced alongside Event IR when the full pipeline is built |
+| Defer Score IR to Phase 3 | Score IR is the middle layer between Intent and Event; introduced alongside Event IR when the full pipeline is built |
 | Direct MIDI emission in Phase 1 | Faster path to sound; `realize_to_midi()` skips Event IR layer |
 | Built-in live playback via rtmidi | Rapid prototyping requires instant feedback; file-based playback too slow |
 | Layered playback: system synth → virtual port → FluidSynth | Simple default, pro DAW integration, standalone option |

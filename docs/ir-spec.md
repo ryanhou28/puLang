@@ -1,6 +1,6 @@
 # puLang IR Specification
 
-*Draft v0.2 — Three-tier IR with Dialect Framework*
+*Draft — Three-tier IR with Dialect Framework*
 
 ---
 
@@ -16,7 +16,7 @@ The three standard dialects shipped with puLang are:
 
 ### Why Three Tiers?
 
-The original two-tier design (Intent → Event) had an enormous gap between "play a I-IV-V-I with arpeggiated piano" and "MIDI note 60 at beat 0 for 0.25 beats at velocity 100." That jump flattens an entire layer of musical decision-making:
+There is a large semantic gap between compositional intent ("play a I-IV-V-I with arpeggiated piano") and performance events ("MIDI note 60 at beat 0 for 0.25 beats at velocity 100"). Jumping directly between these levels flattens an entire layer of musical decision-making:
 
 - **Voice leading**: How does the soprano move from chord to chord?
 - **Voicing**: Close or open position? What register? What doubling?
@@ -539,9 +539,9 @@ Score IR captures **realized musical content** — the specific pitches, rhythms
 
 Score IR is **bar-relative and voice-aware**: pitches are named (not MIDI numbers), time is organized by bar and beat (not absolute position), and every note belongs to a named voice/part.
 
-### Why Score IR Matters
+### Role of Score IR
 
-Score IR is where the crucial musical decisions live that are invisible in both Intent IR and Event IR:
+Score IR is where the crucial musical decisions live that are invisible at both the Intent and Event levels:
 
 ```
 Intent IR:  "I → IV → V → I in C major, 4 voices, block_chords pattern"
@@ -557,7 +557,7 @@ Event IR:   {pitch: 64, start: "0", duration: "1", velocity: 80, track: "soprano
             ...
 ```
 
-Without Score IR, all the voice leading decisions, voicing choices, and expressive markings are made implicitly inside the lowering function and immediately discarded. Score IR makes them **inspectable, analyzable, and transformable**.
+Score IR makes voice leading decisions, voicing choices, and expressive markings **inspectable, analyzable, and transformable** — rather than burying them inside a monolithic lowering function where they would be immediately discarded.
 
 ### Score
 
@@ -1226,7 +1226,7 @@ class Piece:
 
 ## Analytical Dialect Examples
 
-These dialects are not shipped with puLang v0.1 but illustrate the framework's extensibility. They represent real musicological analysis methods that could be formalized as IR dialects.
+These dialects are not part of puLang's standard distribution but illustrate the framework's extensibility. They represent real musicological analysis methods that could be formalized as IR dialects.
 
 ### Schenkerian Dialect
 
@@ -1334,11 +1334,11 @@ How much detail should Score IR carry? Current design is moderate:
 
 The current choice is moderate — enough for musical analysis and MusicXML export, not so much that it becomes a notation format. Engraving details are out of scope (use LilyPond/Dorico for that).
 
-### 5. Backward Compatibility
+### 5. Direct Intent → Event Path
 
-Score IR is a new layer. How to handle existing code that goes Intent → Event directly:
-- **Keep direct path**: Intent → Event lowering still works (internally goes through Score IR)
-- **Deprecate**: Phase out direct lowering in favor of explicit two-step
+Should users be able to skip Score IR and go Intent → Event directly?
+- **Keep direct path**: Intent → Event lowering works as a convenience (internally goes through Score IR)
+- **Explicit only**: Require explicit two-step lowering (Intent → Score → Event)
 - **Both** (current plan): Direct path works but is syntactic sugar for Intent → Score → Event
 
 ---

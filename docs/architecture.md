@@ -807,7 +807,7 @@ Key architectural decisions and their rationale.
 
 ### Three-Tier IR: Intent, Score, Event
 
-- Two tiers (Intent → Event) had too large a semantic gap
+- Intent → Event alone has too large a semantic gap for meaningful analysis
 - Score IR captures voice leading, voicing, articulation, and dynamics — where music theory lives
 - Each tier has its own natural pitch representation (Roman numerals → named pitches → MIDI) and timing (bar counts → bar-relative beats → absolute beats)
 - Enables analysis passes at the level where they're most natural (counterpoint at Score level, harmonic function at Intent level, groove at Event level)
@@ -888,12 +888,11 @@ verse.track("bass", pattern=root_eighths, octave=-2)
 - **`InstrumentBank`** — Maps roles/names to instruments
 - **Sensible defaults** — Each role has a default synth preset
 
-### Backward Compatibility: Direct Intent → Event Path
+### Direct Intent → Event Path
 
-- Existing code that goes Intent → Event directly will continue to work
-- Internally, direct lowering will route through Score IR (Intent → Score → Event)
-- Users can access Score IR at any point for analysis or transformation
-- No breaking changes to existing pyPuLang API
+- A convenience `realize()` function lowers Intent → Event directly for simple use cases
+- Internally, this routes through Score IR (Intent → Score → Event)
+- Users can intercept at the Score level for analysis or transformation when needed
 
 ---
 

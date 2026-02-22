@@ -106,6 +106,8 @@ When needed, puLang allows:
 
 These are available but not the primary mode of expression.
 
+There is an inherent design tension here: if the escape hatch is awkward, composers will abandon the language the first time they need a specific note. If it's too easy, nobody uses the abstractions and puLang becomes just another note-level DSL. The escape hatch must be explicit but not ugly.
+
 ---
 
 ## What puLang Is Not
@@ -217,6 +219,29 @@ events = events.transform(humanize(amount=0.1))  # Event-level transform
 These are **compiler passes**, not ad-hoc scripts. And like MLIR, the dialect framework is extensible — musicologists can define their own dialects (Schenkerian, set theory, counterpoint) with their own passes.
 
 The lowering process itself is a **musicological statement**: how you go from "V7 chord" to specific voicings encodes centuries of voice leading pedagogy. Different eras and styles have different rules, and puLang makes these decisions **explicit, inspectable, and configurable**.
+
+---
+
+## Risks and Open Challenges
+
+### Critical Risks
+
+1. **Abstraction mismatch** — If puLang's abstractions don't match how composers think, they'll fight the language
+2. **Iteration latency** — If hearing changes takes >1-2 seconds, the tool loses its value proposition over a DAW
+3. **Scope creep** — Temptation to add notation, DSP, and live coding will kill focus
+4. **IR over-engineering** — Easy to design beautiful IR that nobody can emit or consume
+
+These are **execution risks**, not concept risks. The idea is sound; the question is whether we can make it feel good enough.
+
+### Hard Problems
+
+- **Voice leading transforms** — Real algorithmic challenge (constraint satisfaction, heuristics). Getting voice leading that sounds musical, not just rule-following, is non-trivial.
+- **Rhythm representation** — `rate=1/16` is fine for arpeggios, but how to express syncopation, swing, rubato, and polyrhythm? This is where most music DSLs get messy. puLang needs a rhythm story that goes beyond simple subdivision rates.
+- **Playback latency** — Python + MIDI playback can be sluggish. The iteration loop must feel instant.
+
+### Validation Strategy
+
+The ultimate test: **write 3 real compositions** in puLang and see if they're music you'd actually want to hear. If the abstractions survive contact with real creative work, the design is sound. If you always escape to literal notes, the intent layer has failed.
 
 ---
 
