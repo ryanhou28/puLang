@@ -629,7 +629,7 @@ harmony: ii V/vi vi V
 - [ ] Update transformer to parse secondary dominants
 - [ ] Test: secondary dominants resolve correctly
 
-### 2.9 Advanced Patterns
+### 2.9 Advanced Rhythmic Patterns
 
 ```
 Bass:
@@ -644,6 +644,7 @@ Guitar:
 - [ ] Parse pattern calls: `name(param=value)`
 - [ ] Support string parameters for grid patterns
 - [ ] Support keyword arguments
+- [ ] Ensure rhythm edge cases (tuplets, metric modulation) can be expressed
 - [ ] Test: parametric patterns work
 
 ### 2.10 Instruments in puLang
@@ -792,11 +793,27 @@ Help: Each chord defaults to 1 bar. Did you mean:
 
 ---
 
-## Phase 4: Tooling & Ecosystem
+## Phase 4: Transforms and Event IR Output
+
+**Goal:** Integrate the transform pipeline and stabilize lower-level Event IR emission from the compiler frontend.
+
+### 4.1 CLI Output Formats
+- [ ] Add `--ir=intent` and `--ir=score` flags to `pulang compile`
+- [ ] Integrate Intent -> Score -> Event lowering correctly into CLI
+- [ ] Test: Correct IR level is output when requested
+
+### 4.2 Escape Hatch Locking
+- [ ] Add syntax for locking literal notes from transformations
+- [ ] Parse and lower `locked=True` property on Notes objects
+- [ ] Validate locking semantics in transformations
+
+---
+
+## Phase 5: Tooling & Ecosystem
 
 **Goal:** IDE support, language server, VSCode extension.
 
-### 4.1 Language Server Protocol (LSP)
+### 5.1 Language Server Protocol (LSP)
 
 **Features to implement:**
 - Diagnostics (errors/warnings in real-time)
@@ -818,7 +835,7 @@ Help: Each chord defaults to 1 bar. Did you mean:
 - [ ] Add `pulang lsp` command to start server
 - [ ] Test: LSP server responds to requests correctly
 
-### 4.2 VSCode Extension
+### 5.2 VSCode Extension
 
 **Features:**
 - Syntax highlighting
@@ -840,7 +857,7 @@ Help: Each chord defaults to 1 bar. Did you mean:
 - [ ] Package extension (`.vsix` file)
 - [ ] Publish to VSCode marketplace
 
-### 4.3 Tree-sitter Grammar (Optional)
+### 5.3 Tree-sitter Grammar (Optional)
 
 **Benefits:**
 - Better syntax highlighting in GitHub, editors
@@ -853,7 +870,7 @@ Help: Each chord defaults to 1 bar. Did you mean:
 - [ ] Use Tree-sitter parser in LSP for incremental parsing
 - [ ] Test: Tree-sitter parser matches Lark parser output
 
-### 4.4 Online Playground (Future)
+### 5.4 Online Playground (Future)
 
 **Features:**
 - Monaco editor with .pu syntax highlighting
@@ -867,12 +884,21 @@ Help: Each chord defaults to 1 bar. Did you mean:
 - [ ] Add sharing functionality
 - [ ] Deploy to static hosting
 
-### Exit Criteria (Phase 4)
+### Exit Criteria (Phase 5)
 
 - [ ] VSCode extension provides great editing experience
 - [ ] LSP provides real-time feedback on errors
 - [ ] Users can develop .pu files comfortably in VSCode
 - [ ] Syntax highlighting works in GitHub/GitLab
+
+## Phase 6: Lifting (Analysis) Pipeline Support
+
+**Goal:** Ensure the compiler tooling supports lifting Event/Score data into `.pu` files.
+
+### 6.1 Decompilation commands
+- [ ] Add `pulang decompile song.mid` command
+- [ ] Implement `EventStream` -> `.pu` source code generation
+- [ ] Test: Roundtrip parsing/decompilation
 
 ---
 
@@ -967,7 +993,7 @@ test "bass in correct range":
 - Format command (code quality)
 - Great error messages
 
-### Future (Phase 4+)
+### Future (Phase 5+)
 - LSP (IDE integration)
 - VSCode extension (first-class editing)
 - Tree-sitter grammar (ecosystem)

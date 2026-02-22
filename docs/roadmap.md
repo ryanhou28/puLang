@@ -507,6 +507,11 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 - [x] `InstrumentBank` allows per-role and per-track instrument assignment
 - [x] `p.connect()` creates virtual MIDI port for DAW routing
 
+### 2.7 Audio Export
+- [ ] Implement `p.save_audio(path)` — render audio to a `.wav` file
+- [ ] Route internal event stream through `BuiltinSynth`
+- [ ] Export directly to file without real-time recording
+
 ---
 
 ## Phase 3: Transforms, Score IR, and Event IR
@@ -567,6 +572,7 @@ Score IR captures realized musical content — specific pitches in specific voic
 - [ ] Implement `lower_to_score(piece: intent.Piece) -> Score` — Intent → Score lowering
 - [ ] Pattern realization produces Score IR bars (not Event IR events directly)
 - [ ] Voice leading decisions happen during Intent → Score lowering
+- [ ] **Escape Hatch Semantics:** Define precisely how literal notes (`Track.notes()`) are handled during lowering. Should they bypass voice-leading transformations completely (i.e., pass-through), or be subject to them? Add a `locked=True` parameter to literal notes to prevent unwanted modifications during Score-level passes.
 
 ### 3.2 Event IR
 
@@ -825,7 +831,32 @@ voiced_piece.save_midi("chorale_voiced.mid")
 
 ---
 
-## Phase 6: MusicXML Backend
+## Phase 6: Lifting (Analysis) Pipeline
+
+**Goal:** Prove the "two-way street" by parsing external performance data and lifting it back into the IR tiers for analysis.
+
+### 6.1 Event IR Lifting
+- [ ] Implement `parse_midi(path: str) -> EventStream`
+- [ ] Read standard MIDI files into Event IR (ticks to exact fractions where possible based on tempo map)
+
+### 6.2 Score IR Lifting (Transcription)
+- [ ] Implement `lift_to_score(events: EventStream) -> Score`
+- [ ] Basic quantization to snap events to a grid
+- [ ] Basic voice separation (heuristics to group events into parts/voices)
+- [ ] Identify bar boundaries and time signatures
+
+### 6.3 Intent IR Lifting (Analysis)
+- [ ] Implement `lift_to_intent(score: Score) -> intent.Piece`
+- [ ] Harmonic analysis pass: infer chords from Score notes
+- [ ] Form detection: attempt to chunk bars into logical sections (A/B form)
+
+### Exit Criteria
+- [ ] Can load a basic, quantized MIDI file and reconstruct its basic structural intent.
+- [ ] The full cycle (Intent -> Score -> Event -> MIDI -> Event -> Score -> Intent) works for simple material without massive information loss.
+
+---
+
+## Phase 7: MusicXML Backend
 
 **Goal:** Output to notation software. Score IR makes this natural — it already has bar structure, named pitches, voices, dynamics, and articulation.
 
@@ -861,7 +892,7 @@ voiced_piece.save_midi("chorale_voiced.mid")
 
 ---
 
-## Phase 7: Real Compositions
+## Phase 8: Real Compositions
 
 **Goal:** Validate with actual music.
 
@@ -908,13 +939,9 @@ voiced_piece.save_midi("chorale_voiced.mid")
 
 ---
 
-## Future Phases (Unscheduled)
+## Phase 9: Dialect Framework and Pass Ecosystem
 
-These are ideas, not commitments. Check off if/when implemented.
-
-### Dialect Framework and Pass Ecosystem
-
-**Goal:** Formalize the MLIR-inspired dialect framework so users can define their own dialects, passes, and lowering/lifting strategies.
+**Goal:** Formalize the MLIR-inspired dialect framework so users can define their own dialects, passes, and lowering/lifting strategies. This stabilizes the API for third-party extensions.
 
 #### Dialect Framework Infrastructure
 - [ ] Define `Dialect` protocol (operations, types, validate)
@@ -944,6 +971,12 @@ These are ideas, not commitments. Check off if/when implemented.
 - [ ] Support `pip install pulang-<dialect>` pattern for community dialects
 - [ ] Example: `pulang-schenkerian` — Schenkerian analysis dialect
 - [ ] Example: `pulang-settheory` — pitch class set theory dialect
+
+---
+
+## Future Phases (Unscheduled)
+
+These are ideas, not commitments. Check off if/when implemented.
 
 ### Sampled Instruments and Advanced Playback
 
