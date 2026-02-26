@@ -508,9 +508,9 @@ p.play(backend=VirtualMidi("pypulang"))  # Route to DAW
 - [x] `p.connect()` creates virtual MIDI port for DAW routing
 
 ### 2.7 Audio Export
-- [ ] Implement `p.save_audio(path)` — render audio to a `.wav` file
-- [ ] Route internal event stream through `BuiltinSynth`
-- [ ] Export directly to file without real-time recording
+- [x] Implement `p.save_audio(path)` — render audio to a `.wav` file
+- [x] Route internal event stream through `BuiltinSynth`
+- [x] Export directly to file without real-time recording
 
 ---
 

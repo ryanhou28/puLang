@@ -19,16 +19,21 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-# Check if sounddevice is available
 try:
     import numpy as np
+
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None  # type: ignore
+
+try:
     import sounddevice as sd
 
     SOUNDDEVICE_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError):
     SOUNDDEVICE_AVAILABLE = False
     sd = None  # type: ignore
-    np = None  # type: ignore
 
 
 class BuiltinSynthHandle(BasePlaybackHandle):
@@ -271,6 +276,40 @@ class BuiltinSynth(BasePlaybackBackend):
             output = output * (0.9 / max_amplitude)
 
         return output
+
+    def render_to_audio(
+        self,
+        events: list[tuple[int, float, float, int, str, str]],
+        tempo: float,
+        instruments: InstrumentBank | None = None,
+    ) -> "npt.NDArray[np.float32]":
+        """
+        Render events to an audio buffer without playing back.
+
+        This is the offline rendering path used by save_audio(). It requires
+        numpy but does NOT require sounddevice.
+
+        Args:
+            events: List of note events as tuples:
+                    (pitch, start_beat, duration_beats, velocity, track_name, role)
+            tempo: Tempo in BPM
+            instruments: Optional InstrumentBank for sound assignment
+
+        Returns:
+            numpy float32 array of audio samples at self._sample_rate
+
+        Raises:
+            RuntimeError: If numpy is not installed
+        """
+        if not NUMPY_AVAILABLE:
+            raise RuntimeError(
+                "numpy is not installed. Install with: pip install pypulang[playback]"
+            )
+
+        if instruments is None:
+            instruments = get_default_instrument_bank()
+
+        return self._render_events(events, tempo, instruments)
 
     def is_available(self) -> bool:
         """Check if sounddevice is available."""

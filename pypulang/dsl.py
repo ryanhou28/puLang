@@ -761,6 +761,48 @@ class PieceBuilder:
         ir = self.to_ir()
         save_midi(ir, path, ticks_per_beat=ticks_per_beat)
 
+    def save_audio(
+        self,
+        path: str,
+        instruments: "InstrumentBank | None" = None,
+        sample_rate: int = 44100,
+    ) -> None:
+        """
+        Render this piece and save to a WAV audio file.
+
+        Uses the built-in synthesizer to render all tracks offline (no
+        real-time playback) and writes the result to a .wav file via
+        soundfile.
+
+        Args:
+            path: Output file path (e.g., "output.wav")
+            instruments: Optional InstrumentBank for custom instrument sounds
+            sample_rate: Audio sample rate in Hz (default 44100)
+
+        Raises:
+            RuntimeError: If numpy or soundfile is not installed
+
+        Example:
+            p.save_audio("output.wav")
+            p.save_audio("output.wav", sample_rate=48000)
+        """
+        try:
+            import soundfile as sf
+        except ImportError as exc:
+            raise RuntimeError(
+                "soundfile is not installed. Install with: pip install pypulang[playback]"
+            ) from exc
+
+        from pypulang.playback.builtin_synth import BuiltinSynth
+
+        synth = BuiltinSynth(sample_rate=sample_rate)
+        ir = self.to_ir()
+        events, tempo = realize_to_events(ir)
+        audio = synth.render_to_audio(events, tempo, instruments)
+
+        # soundfile expects shape (samples,) for mono or (samples, channels) for stereo
+        sf.write(path, audio, sample_rate)
+
     def save(self, path: str, **kwargs: Any) -> None:
         """
         Save this piece to a file, auto-detecting format from extension.
@@ -768,14 +810,17 @@ class PieceBuilder:
         Args:
             path: Output file path. Extension determines format:
                   - .mid, .midi → MIDI file
-                  - .xml (future) → MusicXML file
-            **kwargs: Format-specific options (e.g., ticks_per_beat for MIDI)
+                  - .wav → WAV audio file
+            **kwargs: Format-specific options (e.g., ticks_per_beat for MIDI,
+                      sample_rate for WAV)
         """
         if path.endswith(".mid") or path.endswith(".midi"):
             self.save_midi(path, **kwargs)
+        elif path.endswith(".wav"):
+            self.save_audio(path, **kwargs)
         else:
             raise ValueError(
-                f"Unknown file format: {path}. Supported: .mid, .midi"
+                f"Unknown file format: {path}. Supported: .mid, .midi, .wav"
             )
 
     # -------------------------------------------------------------------------
