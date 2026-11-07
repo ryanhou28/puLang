@@ -11,6 +11,8 @@ This module provides the user-facing API for composing music:
 
 from __future__ import annotations
 
+import copy
+from dataclasses import replace
 from enum import Enum
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Union
