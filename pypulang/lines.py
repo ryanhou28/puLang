@@ -60,7 +60,7 @@ def parse_line(text: str, bar_beats: Fraction | None = None) -> list[LineNote]:
     bar_start = Fraction(0)
     value = Fraction(1)
     tied = False
-    for token in text.split():
+    for token in text.replace("|", " | ").split():
         if token == "|":
             if bar_beats is not None and at - bar_start != bar_beats:
                 raise ValueError(

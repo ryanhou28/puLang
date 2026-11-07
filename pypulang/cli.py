@@ -10,6 +10,7 @@ The `pulang` command.
     pulang edits song.py                  List those edits
     pulang drop song.py <location>        Forget one of them
     pulang render song.py -o song.wav     Bounce it
+    pulang stems song.py -o stems/        Bounce each track alone, and measure them
     pulang watch song.py                  Push every time the file is saved
 """
 
@@ -22,8 +23,10 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
+from pypulang import analysis
 from pypulang.backends.kaidaw import KaidawClient, KaidawError, SongState, pull, push, status
 from pypulang.backends.kaidaw.client import DEFAULT_PORT, WslTransport
+from pypulang.backends.kaidaw.sync import MASTER
 from pypulang.backends.midi import event_to_midi
 from pypulang.compiler import print_ir
 from pypulang.compiler.dialects import event as event_dialect
@@ -149,6 +152,57 @@ def cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_to(client: KaidawClient, output: Path, start: float, seconds: float) -> dict:
+    transport = client.transport
+    if isinstance(transport, WslTransport):
+        name = f"pulang-{output.stem}.wav"
+        rendered = client.render(f"{transport.share_win}\\{name}", start, seconds)
+        shutil.move(str(transport.share_wsl / name), output)
+        return rendered
+    return client.render(str(output.resolve()), start, seconds)
+
+
+def cmd_stems(args: argparse.Namespace) -> int:
+    """
+    Bounce each track alone, by soloing it. kaiDAW can only bounce the master.
+
+    Solo is a mix setting and the DAW owns the mix, so each track is put back as
+    it was. A soloed track's sends are silenced with everything else, so stems are dry.
+    """
+    song = load_song(args.song)
+    client = _client(args)
+    state = _state(args)
+    lock = state.load_lock()
+    if lock.empty:
+        print("Push the song first.", file=sys.stderr)
+        return 1
+    out = Path(args.output)
+    out.mkdir(parents=True, exist_ok=True)
+    seconds = args.seconds or _seconds(song) + 2.0
+    rows = []
+    for name, info in lock.tracks.items():
+        if name == MASTER:
+            continue
+        client.apply(
+            [{"type": "SetTrackState", "trackId": info["id"], "soloed": True}],
+            client.revision(),
+            "pulang stems: solo",
+        )
+        try:
+            path = out / f"{name}.wav"
+            _render_to(client, path, args.start, seconds)
+        finally:
+            client.apply(
+                [{"type": "SetTrackState", "trackId": info["id"], "soloed": False}],
+                client.revision(),
+                "pulang stems: unsolo",
+            )
+        samples, rate = analysis.load(str(path))
+        rows.append(analysis.measure(samples, rate, name))
+    print(analysis.report(rows))
+    return 0
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     path = Path(args.song)
     client = _client(args)
@@ -204,6 +258,11 @@ def main(argv: list[str] | None = None) -> int:
     render.add_argument("-o", "--output", required=True)
     render.add_argument("--tail", type=float, default=2.0, help="Seconds of release to keep")
     render.add_argument("--fresh", action="store_true", help="Build it from nothing here")
+
+    stems = with_port(command("stems", cmd_stems, "Bounce each track alone"))
+    stems.add_argument("-o", "--output", required=True)
+    stems.add_argument("--start", type=float, default=0.0, help="Seconds to start from")
+    stems.add_argument("--seconds", type=float, default=0.0, help="Length (default: all of it)")
 
     watch = with_port(command("watch", cmd_watch, "Push every time the file is saved"))
     watch.add_argument("--interval", type=float, default=0.5)

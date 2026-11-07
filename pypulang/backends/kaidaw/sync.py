@@ -29,6 +29,10 @@ from pypulang.compiler.dialects.mus import from_attr
 from pypulang.compiler.locs import loc_key, name_loc
 
 
+# kaiDAW's master bus is addressed by this name, and holds a plugin chain but no fader.
+MASTER = "master"
+
+
 @dataclass
 class SyncReport:
     """What a sync did, in terms a person can check."""
@@ -93,6 +97,8 @@ class DawState:
         self.revision: int = projection["revision"]
         self.tempo_map: list[dict[str, Any]] = projection.get("tempoMap", [])
         self.tracks = {t["id"]: t for t in projection["tracks"]}
+        if "master" in projection:
+            self.tracks[MASTER] = projection["master"]
         self.clips = {c["id"]: c for c in projection["clips"]}
         self.plugins = {p["id"]: p for p in projection["plugins"]}
 
@@ -296,7 +302,9 @@ def _plan_structure(
         name = track.track.data
         info = lock.tracks.get(name)
         devices = track.plugins()
-        if info is None or info["id"] not in state.tracks:
+        if name == MASTER:
+            track_ref = MASTER
+        elif info is None or info["id"] not in state.tracks:
             track_ref = f"$track_{len(ops)}"
             ops.append(
                 {
@@ -310,7 +318,8 @@ def _plan_structure(
         else:
             track_ref = info["id"]
 
-        ops.extend(_plan_mix(track, track_ref, info))
+        if name != MASTER:
+            ops.extend(_plan_mix(track, track_ref, info))
         ops.extend(_plan_devices(track, track_ref, lock))
 
         for clip in track.clips():
@@ -422,10 +431,26 @@ def _plan_clip(
     return ops
 
 
+def _is_selector(name: str) -> bool:
+    """
+    True for a parameter that chooses what other parameters mean.
+
+    Setting Surge XT's "A Osc 1 Type" resets that oscillator's other parameters, and
+    it does so on the next audio block rather than at once. See `_flush`.
+    """
+    return name.endswith(" Type")
+
+
 def _plan_parameters(
     project: daw.ProjectOp, lock: Lock, state: DawState, report: SyncReport
-) -> list[dict[str, Any]]:
-    """Parameters, automation and sends: these need ids that exist only after structure."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Parameters, automation and sends: these need ids that exist only after structure.
+
+    Returns:
+        Selector parameters, which must land first, and everything else
+    """
+    selectors: list[dict[str, Any]] = []
     ops: list[dict[str, Any]] = []
     for track in project.tracks():
         track_name = track.track.data
@@ -440,7 +465,7 @@ def _plan_parameters(
                 if name not in schema:
                     report.warnings.append(f"{key}: no parameter named {name!r}")
                     continue
-                ops.append(
+                (selectors if _is_selector(name) else ops).append(
                     {
                         "type": "SetPluginParameter",
                         "pluginId": entry["id"],
@@ -479,7 +504,7 @@ def _plan_parameters(
                     "gain": send.gain.value.data,
                 }
             )
-    return ops
+    return selectors, ops
 
 
 def _params(device: daw.PluginOp) -> dict[str, float]:
@@ -523,7 +548,12 @@ def _record(project: daw.ProjectOp, lock: Lock, state: DawState, aliases: dict[s
     for track in project.tracks():
         name = track.track.data
         previous = lock.tracks.get(name, {})
-        track_id = previous.get("id") if previous.get("id") in state.tracks else by_name[name]
+        if name == MASTER:
+            track_id = MASTER
+        elif previous.get("id") in state.tracks:
+            track_id = previous["id"]
+        else:
+            track_id = by_name[name]
         lock.tracks[name] = {
             "id": track_id,
             "volume": track.volume.value.data
@@ -615,8 +645,8 @@ def _record_parameters(project: daw.ProjectOp, lock: Lock) -> None:
 def _check_lock(lock: Lock, state: DawState) -> None:
     if lock.empty:
         return
-    ids = {info["id"] for info in lock.tracks.values()}
-    if not ids & set(state.tracks):
+    ids = {info["id"] for info in lock.tracks.values()} - {MASTER}
+    if ids and not ids & set(state.tracks):
         raise KaidawError(
             "None of this song's tracks exist in the open project. Open the project it "
             "was pushed to, or push with fresh=True to build it again here."
@@ -697,8 +727,12 @@ def push(
         state = DawState(client.projection())
     _record(project, lock, state, aliases)
 
-    parameters = _plan_parameters(project, lock, state, report)
-    report.operations += len(parameters)
+    selectors, parameters = _plan_parameters(project, lock, state, report)
+    report.operations += len(selectors) + len(parameters)
+    if selectors:
+        result = client.apply(selectors, revision, "pulang push: plugin modes")
+        revision = result["revision"]
+        client.flush_plugins()
     if parameters:
         result = client.apply(parameters, revision, "pulang push: parameters and automation")
         revision = result["revision"]

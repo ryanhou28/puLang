@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -195,6 +196,25 @@ class KaidawClient:
         if result.get("ok") is False:
             raise KaidawError(f"{endpoint} failed: {result.get('errors')}")
         return result
+
+    def flush_plugins(self) -> None:
+        """
+        Let plugins act on pending changes by running a moment of audio through them.
+
+        Surge XT applies a change of oscillator or filter type on its next audio block,
+        and at that point resets the parameters that belong to it. With no audio device
+        running, that block does not come until the first render, so parameters written
+        before then are silently wiped. This forces the block to happen.
+        """
+        if isinstance(self.transport, WslTransport):
+            name = f"pulang-flush-{os.getpid()}.wav"
+            self.render(f"{self.transport.share_win}\\{name}", 0.0, 0.05)
+            (self.transport.share_wsl / name).unlink(missing_ok=True)
+        elif isinstance(self.transport, HttpTransport):
+            with tempfile.TemporaryDirectory() as directory:
+                self.render(str(Path(directory) / "flush.wav"), 0.0, 0.05)
+        else:
+            self.transport.request("POST", "/flush", {})
 
     def render(
         self, path: str, start: float, length: float, timeout_ms: int = 600000

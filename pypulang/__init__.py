@@ -106,6 +106,7 @@ from pypulang.dsl import (
     root_quarters,
     shuffle,
     snare_roll,
+    solo_line,
     v,
     vi,
     vi7,
@@ -229,6 +230,7 @@ __all__ = [
     "walking_bass",
     "comp",
     "snare_roll",
+    "solo_line",
     "device",
     # Builder classes
     "PieceBuilder",

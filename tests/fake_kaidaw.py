@@ -24,6 +24,13 @@ class FakeKaidaw:
         self.plugins: dict[str, dict[str, Any]] = {}
         self.history: list[dict[str, Any]] = []
         self.saved: dict[str, dict[str, Any]] = {}
+        self.flushes = 0
+        self.master: dict[str, Any] = {
+            "id": "master",
+            "isMaster": True,
+            "name": "Master",
+            "pluginIds": [],
+        }
         self._create_track("Track 1", False)
 
     def _mint(self, prefix: str) -> str:
@@ -35,6 +42,7 @@ class FakeKaidaw:
             {
                 "tempo_map": self.tempo_map,
                 "tracks": self.tracks,
+                "master": self.master,
                 "clips": self.clips,
                 "plugins": self.plugins,
             }
@@ -81,6 +89,8 @@ class FakeKaidaw:
         return track_id
 
     def _track(self, track_id: str) -> dict[str, Any]:
+        if track_id == "master":
+            return self.master
         for track in self.tracks:
             if track["id"] == track_id:
                 return track
@@ -118,7 +128,7 @@ class FakeKaidaw:
             aliases[op["alias"]] = plugin_id
         elif kind == "MovePlugin":
             plugin_id = resolve("pluginId")
-            for track in self.tracks:
+            for track in [*self.tracks, self.master]:
                 if plugin_id in track["pluginIds"]:
                     track["pluginIds"].remove(plugin_id)
                     track["pluginIds"].insert(op["index"], plugin_id)
@@ -188,6 +198,7 @@ class FakeKaidaw:
                 "level": level,
                 "tempoMap": copy.deepcopy(self.tempo_map),
                 "tracks": copy.deepcopy(self.tracks),
+                "master": copy.deepcopy(self.master),
                 "clips": copy.deepcopy(self.clips),
                 "plugins": copy.deepcopy(list(self.plugins.values())),
             }
@@ -213,6 +224,9 @@ class FakeKaidaw:
         if url.path == "/save":
             self.saved[body["path"]] = self._snapshot()
             return {"tracks": []}
+        if url.path == "/flush":
+            self.flushes += 1
+            return {}
         if url.path == "/open":
             self._restore(self.saved[body["path"]])
             return {"tracks": []}

@@ -370,6 +370,7 @@ riff = PatternBuilder("riff")
 walking_bass = PatternBuilder("walking_bass")
 comp = PatternBuilder("comp")
 snare_roll = PatternBuilder("snare_roll")
+solo_line = PatternBuilder("solo_line")
 
 
 # -----------------------------------------------------------------------------

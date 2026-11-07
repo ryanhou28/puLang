@@ -150,3 +150,93 @@ def comp(context: PatternContext) -> list[Event]:
                 events.append(Event(pitch + 12 * context.octave, start, step * short, velocity))
         bar += 1
     return events
+
+
+def _available_tones(context: PatternContext) -> list[int]:
+    """Pitch classes for a line over this chord: its tones first, then its scale."""
+    shape = context.shape
+    chord_pcs = [shape.pitch_class(t) for t in shape.tones]
+    avoid = {(shape.root + 5) % 12} if shape.find("3") is not None else set()
+    scale = [pc for pc in context.scale_pcs() if pc not in chord_pcs and pc not in avoid]
+    return chord_pcs + scale
+
+
+def _nearest(pitch: int, pitch_classes: list[int], direction: int) -> int:
+    """The closest pitch in these classes, strictly above or below `pitch`."""
+    for step in range(1, 13):
+        candidate = pitch + direction * step
+        if candidate % 12 in pitch_classes:
+            return candidate
+    return pitch
+
+
+@context_pattern("solo_line")
+def solo_line(context: PatternContext) -> list[Event]:
+    """
+    An improvised-sounding line: eighth notes that outline the changes.
+
+    Strong beats land on chord tones and weak ones step through the scale. The
+    line turns around at the edges of its register, plays in phrases with rests
+    between them, and ends each phrase on a longer note.
+
+    Params:
+        low: Lowest pitch (default 62)
+        high: Highest pitch (default 86)
+        phrase: Bars in a phrase (default 2)
+        rest: Portion of phrases that are rests (default 1/4)
+    """
+    low = int(context.params.get("low", 62))
+    high = int(context.params.get("high", 86))
+    phrase_bars = int(context.params.get("phrase", 2))
+    rest = float(context.params.get("rest", 0.25))
+    shape = context.shape
+    chord_pcs = [shape.pitch_class(t) for t in shape.tones if t.function != "1"] or [shape.root]
+    tones = _available_tones(context)
+
+    step = Fraction(1, 2)
+    bar_beats = context.bar_beats
+    phrase_beats = bar_beats * phrase_bars
+    end = context.section_offset + context.dur
+    offset = (context.section_offset // step) * step
+    if offset < context.section_offset:
+        offset += step
+
+    events = []
+    while offset < end:
+        phrase = offset // phrase_beats
+        rng = context.rng(f"phrase{phrase}")
+        into_phrase = offset - phrase * phrase_beats
+        if rng.random() < rest or into_phrase >= phrase_beats - 1:
+            offset += step
+            continue
+
+        # Each phrase has its own shape: where it starts, and which way it heads.
+        position = rng.randint(low + 6, high - 6)
+        direction = rng.choice((-1, 1))
+        walk = Fraction(0)
+        while walk < into_phrase:
+            walked = context.rng(f"walk{phrase}:{walk}")
+            position += direction * walked.randint(1, 3)
+            if position >= high - 2 or position <= low + 2:
+                direction = -direction
+            walk += step
+
+        strong = offset % 1 == 0
+        pool = chord_pcs if strong else tones
+        pitch = _nearest(position, pool, direction)
+        pitch = max(low, min(high, pitch))
+        last_in_phrase = into_phrase + step >= phrase_beats - 1
+        length = Fraction(1) if last_in_phrase else step * Fraction(9, 10)
+        velocity = (
+            context.velocity + (6 if strong else -4) + context.rng(f"v{offset}").randint(-6, 6)
+        )
+        events.append(
+            Event(
+                pitch,
+                context.start + offset - context.section_offset,
+                length,
+                max(1, min(127, velocity)),
+            )
+        )
+        offset += step
+    return events
