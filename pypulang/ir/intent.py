@@ -333,12 +333,14 @@ class Note:
         duration: Duration in beats as a Fraction
         velocity: Override velocity (None uses track default)
         offset: Position within section in beats
+        articulation: "staccato", "accent", and so on, or None
     """
 
     pitch: int
     duration: Fraction
     velocity: int | None = None
     offset: Fraction = field(default_factory=lambda: Fraction(0))
+    articulation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -346,6 +348,7 @@ class Note:
             "duration": str(self.duration),
             "velocity": self.velocity,
             "offset": str(self.offset),
+            "articulation": self.articulation,
         }
 
     @classmethod
@@ -355,6 +358,7 @@ class Note:
             duration=Fraction(d["duration"]),
             velocity=d.get("velocity"),
             offset=Fraction(d.get("offset", "0")),
+            articulation=d.get("articulation"),
         )
 
 

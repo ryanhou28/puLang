@@ -318,7 +318,6 @@ class DrumSampler(Instrument):
 
         Uses simple synthesis techniques for basic drum sounds.
         """
-        import numpy as np
 
         # Map common drum pitches to synthesis methods
         if pitch in (35, 36):  # Kick

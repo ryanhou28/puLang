@@ -11,12 +11,11 @@ This module provides the user-facing API for composing music:
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import dataclass, field
 from enum import Enum
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Iterator, Union
+from typing import TYPE_CHECKING, Any, Union
 
+from pypulang.harmony import parse_chart
 from pypulang.ir.intent import (
     Chord,
     ChordChange,
@@ -34,12 +33,14 @@ from pypulang.ir.intent import (
     Track,
     TrackContent,
 )
-from pypulang.midi import realize_to_midi, realize_to_events, save_midi
+from pypulang.lines import parse_line
+from pypulang.midi import realize_to_events, realize_to_midi, save_midi
 
 if TYPE_CHECKING:
     import mido
-    from pypulang.playback.protocols import PlaybackBackend, PlaybackHandle
+
     from pypulang.playback.instruments import InstrumentBank
+    from pypulang.playback.protocols import PlaybackBackend, PlaybackHandle
 
 
 # -----------------------------------------------------------------------------
@@ -125,6 +126,10 @@ class RomanNumeral:
         return self._copy(quality="minor")
 
     # Extension modifiers
+    def ext(self, *tokens: str) -> RomanNumeral:
+        """Add chord tokens by name, such as V.ext("7", "b9", "#11")."""
+        return self._copy(extensions=self._extensions + tokens)
+
     def add7(self) -> RomanNumeral:
         """Add dominant 7th."""
         return self._copy(extensions=self._extensions + ("7",))
@@ -355,6 +360,14 @@ backbeat = PatternBuilder("backbeat")
 eighth_hats = PatternBuilder("eighth_hats")
 shuffle = PatternBuilder("shuffle")
 
+# Patterns that see the chord, the next chord, and the bar
+grid = PatternBuilder("grid")
+hits = PatternBuilder("hits")
+riff = PatternBuilder("riff")
+walking_bass = PatternBuilder("walking_bass")
+comp = PatternBuilder("comp")
+snare_roll = PatternBuilder("snare_roll")
+
 
 # -----------------------------------------------------------------------------
 # Track Builder
@@ -362,7 +375,7 @@ shuffle = PatternBuilder("shuffle")
 
 
 # Parameters that hold a note value, and so reach the IR as beats.
-_NOTE_VALUE_PARAMS = ("rate", "hihat_rate")
+_NOTE_VALUE_PARAMS = ("rate", "hihat_rate", "step")
 
 
 def note_value_to_beats(value: Fraction | float | int | str) -> Fraction:
@@ -400,6 +413,7 @@ class TrackBuilder:
         self._octave_shift: int = 0
         self._velocity: int = 100
         self._muted: bool = False
+        self._voicing: str | None = None
 
     def pattern(
         self, pattern: PatternBuilder | str, **kwargs: Any
@@ -499,6 +513,52 @@ class TrackBuilder:
         self._content = Notes(notes=ir_notes)
         return self
 
+    def line(self, text: str, velocity: int | None = None) -> TrackBuilder:
+        """
+        Set literal notes from melody notation. See `pypulang.lines`.
+
+        Args:
+            text: For example "a4/8 c5 e5/4. r/8 | g5/2 f5/4 e5"
+            velocity: Base velocity (defaults to the track's)
+
+        Example:
+            track.line("d5/8 f5 a5/4 | c6/2. r/4")
+        """
+        section = self._section
+        meter = section._time_signature or section._piece._time_signature
+        base = velocity if velocity is not None else self._velocity
+        notes = []
+        for n in parse_line(text, meter.beats_per_bar):
+            notes.append(
+                Note(
+                    pitch=n.pitch,
+                    duration=n.dur,
+                    velocity=max(1, min(127, int(base * n.velocity_scale))),
+                    offset=n.start,
+                    articulation=n.articulation,
+                )
+            )
+        self._content = Notes(notes=notes)
+        return self
+
+    def voicing(
+        self, name: str, low: int | None = None, high: int | None = None
+    ) -> TrackBuilder:
+        """
+        Choose how this track voices its chords.
+
+        Args:
+            name: A strategy from `pypulang.voicing`: close, shell, rootless, drop2,
+                quartal, upper_structure, wide
+            low: Lowest MIDI pitch, such as E3
+            high: Highest MIDI pitch
+
+        The `voice-lead` pass picks the voicing of each chord so that the whole
+        progression moves as little as it can.
+        """
+        self._voicing = name if low is None else f"{name}({int(low)},{int(high)})"
+        return self
+
     def octave(self, n: int) -> TrackBuilder:
         """Set octave shift for this track."""
         self._octave_shift = n
@@ -541,6 +601,7 @@ class TrackBuilder:
             octave_shift=self._octave_shift,
             velocity=self._velocity,
             muted=self._muted,
+            voicing=self._voicing,
         )
 
 
@@ -632,6 +693,34 @@ class SectionBuilder:
                     )
                 )
 
+        self._harmony = Harmony(changes=changes, duration_unit="bars")
+        return self
+
+    def chart(self, chart: str) -> SectionBuilder:
+        """
+        Set the harmony from a chord chart, one bar between each "|".
+
+        Chords in a bar share it equally and "%" repeats the previous bar. A chart
+        shorter than the section loops until the section is full, so a four-bar
+        vamp in a sixteen-bar section plays four times.
+
+        Example:
+            section.chart("Dm9 G13 | Cmaj9 | Em7 A7b13 | Dm9 G7alt")
+        """
+        key = self._key or self._piece._key
+        parsed = parse_chart(chart, key)
+        bars_in_chart = sum(Fraction(*fraction) for _, fraction in parsed)
+        changes = []
+        filled = Fraction(0)
+        while filled < self._bars:
+            for chord, fraction in parsed:
+                if filled >= self._bars:
+                    break
+                duration = min(Fraction(*fraction), self._bars - filled)
+                changes.append(ChordChange(chord=chord, duration=duration))
+                filled += duration
+            if bars_in_chart == 0:
+                break
         self._harmony = Harmony(changes=changes, duration_unit="bars")
         return self
 
@@ -839,7 +928,7 @@ class PieceBuilder:
             racks=list(self._racks),
         )
 
-    def to_midi(self, ticks_per_beat: int = 480) -> "mido.MidiFile":
+    def to_midi(self, ticks_per_beat: int = 480) -> mido.MidiFile:
         """
         Convert to a mido MidiFile object.
 
@@ -866,7 +955,7 @@ class PieceBuilder:
     def save_audio(
         self,
         path: str,
-        instruments: "InstrumentBank | None" = None,
+        instruments: InstrumentBank | None = None,
         sample_rate: int = 44100,
     ) -> None:
         """
@@ -931,12 +1020,12 @@ class PieceBuilder:
 
     def play(
         self,
-        backend: "PlaybackBackend | None" = None,
-        instruments: "InstrumentBank | None" = None,
+        backend: PlaybackBackend | None = None,
+        instruments: InstrumentBank | None = None,
         from_bar: int | None = None,
         section: str | None = None,
         wait: bool = True,
-    ) -> "PlaybackHandle":
+    ) -> PlaybackHandle:
         """
         Play this piece.
 
@@ -980,11 +1069,11 @@ class PieceBuilder:
     def loop(
         self,
         count: int | None = None,
-        backend: "PlaybackBackend | None" = None,
-        instruments: "InstrumentBank | None" = None,
+        backend: PlaybackBackend | None = None,
+        instruments: InstrumentBank | None = None,
         section: str | None = None,
         bars: int | None = None,
-    ) -> "PlaybackHandle":
+    ) -> PlaybackHandle:
         """
         Loop this piece or a section.
 
@@ -1081,8 +1170,8 @@ class PieceBuilder:
     def watch(
         self,
         source_file: str | None = None,
-        backend: "PlaybackBackend | None" = None,
-        instruments: "InstrumentBank | None" = None,
+        backend: PlaybackBackend | None = None,
+        instruments: InstrumentBank | None = None,
         loop: bool = True,
         from_bar: int | None = None,
         section: str | None = None,
@@ -1153,10 +1242,10 @@ class _LoopingHandle:
 
     def __init__(
         self,
-        backend: "PlaybackBackend",
+        backend: PlaybackBackend,
         events: list[tuple[int, float, float, int, str]],
         tempo: float,
-        instruments: "InstrumentBank | None",
+        instruments: InstrumentBank | None,
         count: int | None,
     ) -> None:
         self._backend = backend
@@ -1164,7 +1253,7 @@ class _LoopingHandle:
         self._tempo = tempo
         self._instruments = instruments
         self._count = count
-        self._current_handle: "PlaybackHandle | None" = None
+        self._current_handle: PlaybackHandle | None = None
         self._stopped = False
         self._loop_count = 0
         self._thread: Any = None

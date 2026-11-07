@@ -250,9 +250,17 @@ class NoteOp(IRDLOperation):
     offset = prop_def(RationalAttr)
     dur = prop_def(RationalAttr)
     vel = opt_prop_def(IntegerAttr)
-    assembly_format = "$pitch `at` $offset `for` $dur (`vel` $vel^)? attr-dict"
+    art = opt_prop_def(StringAttr)
+    assembly_format = "$pitch `at` $offset `for` $dur (`vel` $vel^)? (`art` $art^)? attr-dict"
 
-    def __init__(self, pitch: int, offset: Fraction, dur: Fraction, vel: int | None):
+    def __init__(
+        self,
+        pitch: int,
+        offset: Fraction,
+        dur: Fraction,
+        vel: int | None,
+        art: str | None = None,
+    ):
         props: dict[str, Attribute] = {
             "pitch": IntegerAttr(pitch, i64),
             "offset": RationalAttr(offset),
@@ -260,6 +268,8 @@ class NoteOp(IRDLOperation):
         }
         if vel is not None:
             props["vel"] = IntegerAttr(vel, i64)
+        if art is not None:
+            props["art"] = StringAttr(art)
         super().__init__(properties=props)
 
 

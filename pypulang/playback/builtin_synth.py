@@ -282,7 +282,7 @@ class BuiltinSynth(BasePlaybackBackend):
         events: list[tuple[int, float, float, int, str, str]],
         tempo: float,
         instruments: InstrumentBank | None = None,
-    ) -> "npt.NDArray[np.float32]":
+    ) -> npt.NDArray[np.float32]:
         """
         Render events to an audio buffer without playing back.
 

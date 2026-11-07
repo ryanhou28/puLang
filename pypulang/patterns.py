@@ -15,8 +15,9 @@ Returns:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from fractions import Fraction
-from typing import Any, Callable
+from typing import Any
 
 # Type alias for note events
 # (pitch, start_offset, duration, velocity)

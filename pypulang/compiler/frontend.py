@@ -21,7 +21,7 @@ def _track_op(section: Section, track: Track, harmony: intent.HarmonyOp | None) 
         body.append(op)
     elif isinstance(content, Notes):
         notes = [
-            intent.NoteOp(n.pitch, n.offset, n.duration, n.velocity)
+            intent.NoteOp(n.pitch, n.offset, n.duration, n.velocity, n.articulation)
             for n in content.notes
             if n.pitch >= 0
         ]

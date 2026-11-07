@@ -20,6 +20,7 @@ from pypulang.compiler.dialects.mus import from_attr
 from pypulang.compiler.locs import in_section
 from pypulang.compiler.notes import NoteRecord, add_notes
 from pypulang.compiler.timeline import Timeline
+from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.ir.intent import Chord, Key, TimeSignature
 from pypulang.resolution import resolve_chord
 
@@ -91,6 +92,9 @@ def _slots_for(
     harmony = pattern.harmony.owner
     assert isinstance(harmony, intent.HarmonyOp)
     spans = _chord_spans(harmony, marker.length, meter)
+    if not spans and pattern.kind.data in CONTEXT_PATTERNS:
+        # Drums need no chords. A section with no harmony still has to play them.
+        spans = [(Chord("I"), Fraction(0), marker.length)]
     slots = []
     for index, (chord, at, beats) in enumerate(spans):
         next_chord = spans[index + 1][0] if index + 1 < len(spans) else following
@@ -134,6 +138,7 @@ def _literal_records(
                 start=start + op.offset.data,
                 dur=op.dur.data,
                 vel=velocity,
+                articulation=op.art.data if op.art is not None else None,
             )
         )
     return records

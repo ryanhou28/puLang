@@ -465,3 +465,48 @@ def prefers_flats(key: Key) -> bool:
         return False
     tonic = pitch_class_to_semitone(key.root)
     return (tonic + _MODE_TO_MAJOR_OFFSET[key.mode]) % 12 in _FLAT_MAJOR_TONICS
+
+
+@dataclass(frozen=True)
+class ChordShape:
+    """A chord as pitch classes: what voicing strategies work from."""
+
+    root: int
+    bass: int | None
+    tones: tuple[ChordTone, ...]
+
+    def pitch_class(self, tone: ChordTone) -> int:
+        return (self.root + tone.interval) % 12
+
+    def find(self, *functions: str) -> ChordTone | None:
+        """The first tone with one of these names, in the order given."""
+        for name in functions:
+            for tone in self.tones:
+                if tone.function == name:
+                    return tone
+        return None
+
+    @property
+    def third(self) -> ChordTone | None:
+        return self.find("3", "4", "2")
+
+    @property
+    def seventh(self) -> ChordTone | None:
+        return self.find("7", "6")
+
+    def colours(self) -> list[ChordTone]:
+        """The tones beyond the shell, the ones that give a voicing its flavour."""
+        order = ("#9", "b9", "9", "b13", "13", "#11", "11", "#5", "b5", "5")
+        return [t for name in order for t in self.tones if t.function == name]
+
+
+def chord_shape(chord: Chord, key: Key) -> ChordShape:
+    """The pitch classes of a chord in a key."""
+    bass = None
+    if chord.bass_offset is not None:
+        bass = (pitch_class_to_semitone(key.root) + chord.bass_offset) % 12
+    return ChordShape(
+        root=root_pitch_class(chord, key),
+        bass=bass,
+        tones=tuple(chord_intervals(chord.quality, chord.extensions)),
+    )

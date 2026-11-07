@@ -22,6 +22,7 @@ from pypulang.compiler.passes.lower_event import LowerEventToDaw, warnings_of
 from pypulang.compiler.passes.lower_intent import LowerIntentToScore
 from pypulang.compiler.passes.lower_score import LowerScoreToEvent
 from pypulang.compiler.passes.realize import RealizePatterns
+from pypulang.compiler.passes.voice_lead import VoiceLead
 from pypulang.ir.intent import Piece
 
 STAGES = ("intent", "score", "event", "daw")
@@ -64,14 +65,6 @@ class CompileResult:
     def warnings(self) -> list[str]:
         last = next(reversed(self.stages.values()))
         return warnings_of(last)
-
-
-def default_score_passes() -> list[ModulePass]:
-    return []
-
-
-def default_event_passes() -> list[ModulePass]:
-    return []
 
 
 def compile_piece(
@@ -117,7 +110,7 @@ def compile_piece(
         ("intent", list(intent_passes)),
         (
             "score",
-            [LowerIntentToScore(), *score_passes, RealizePatterns()],
+            [LowerIntentToScore(), VoiceLead(), *score_passes, RealizePatterns()],
         ),
         ("event", [LowerScoreToEvent(), *event_passes]),
         ("daw", [LowerEventToDaw(), *daw_passes]),

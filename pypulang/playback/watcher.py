@@ -10,16 +10,16 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import inspect
-import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pypulang.playback.protocols import PlaybackBackend, PlaybackHandle
     from pypulang.playback.instruments import InstrumentBank
+    from pypulang.playback.protocols import PlaybackBackend, PlaybackHandle
 
 
 class FileWatcher:
@@ -144,8 +144,8 @@ class HotReloadSession:
         self,
         source_file: Path,
         piece_var_name: str,
-        backend: "PlaybackBackend | None",
-        instruments: "InstrumentBank | None",
+        backend: PlaybackBackend | None,
+        instruments: InstrumentBank | None,
         loop: bool,
         from_bar: int | None,
         section: str | None,
@@ -158,7 +158,7 @@ class HotReloadSession:
         self._from_bar = from_bar
         self._section = section
 
-        self._current_handle: "PlaybackHandle | None" = None
+        self._current_handle: PlaybackHandle | None = None
         self._watcher: FileWatcher | None = None
         self._stopped = False
         self._current_tempo: float = 120.0  # Track tempo for position calculation
@@ -299,7 +299,7 @@ class HotReloadSession:
         if self._stopped:
             return
 
-        print(f"\n[watch] File changed, reloading...")
+        print("\n[watch] File changed, reloading...")
 
         # Calculate current playback position (best effort)
         current_bar = self._get_current_bar()
@@ -347,8 +347,8 @@ def watch_piece(
     piece_builder: Any,
     source_file: str | Path | None = None,
     piece_var: str = "p",
-    backend: "PlaybackBackend | None" = None,
-    instruments: "InstrumentBank | None" = None,
+    backend: PlaybackBackend | None = None,
+    instruments: InstrumentBank | None = None,
     loop: bool = True,
     from_bar: int | None = None,
     section: str | None = None,

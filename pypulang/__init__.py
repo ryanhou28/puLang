@@ -51,6 +51,68 @@ Drums (Phase 2.5):
 __version__ = "0.1.0"
 
 # Core IR types (for advanced usage)
+# DSL - Main user-facing API
+from pypulang.dsl import (
+    # Common 7th chords
+    I7,
+    II,
+    II7,
+    III,
+    III7,
+    IV,
+    IV7,
+    V7,
+    VI,
+    VI7,
+    VII,
+    VII7,
+    # Roman numeral constants - Major
+    I,
+    Imaj7,
+    IVmaj7,
+    PatternBuilder,
+    # Builder classes (for type hints)
+    PieceBuilder,
+    # Role enum
+    Role,
+    RomanNumeral,
+    SectionBuilder,
+    TrackBuilder,
+    V,
+    arp,
+    backbeat,
+    block_chords,
+    comp,
+    device,
+    eighth_hats,
+    four_on_floor,
+    grid,
+    hits,
+    # Roman numeral constants - Minor
+    i,
+    ii,
+    ii7,
+    iii,
+    iii7,
+    iv,
+    # Main entry point
+    piece,
+    riff,
+    # Drum pattern singletons (Phase 2.5)
+    rock_beat,
+    root_eighths,
+    root_fifths,
+    # Pattern singletons
+    root_quarters,
+    shuffle,
+    snare_roll,
+    v,
+    vi,
+    vi7,
+    vii,
+    vii7,
+    walking_bass,
+)
 from pypulang.ir.intent import (
     Chord,
     ChordChange,
@@ -79,6 +141,26 @@ from pypulang.patterns import (
     register_pattern,
 )
 
+# Pitch utilities (escape hatch for literal notes)
+from pypulang.pitches import (
+    REST,
+    ChordSpec,
+    NoteSpec,
+    # Core class
+    Pitch,
+    chord,
+    # Note specification functions
+    note,
+    rest,
+)
+
+# Playback configuration (available even without optional deps)
+from pypulang.playback.config import (
+    get_available_backends,
+    get_default_backend,
+    set_default_backend,
+)
+
 # Chord resolution (for advanced usage)
 from pypulang.resolution import (
     get_bass_note,
@@ -91,82 +173,6 @@ from pypulang.scales import (
     get_key_root_pitch,
     get_scale_pitches,
     pitch_class_to_semitone,
-)
-
-# DSL - Main user-facing API
-from pypulang.dsl import (
-    # Main entry point
-    piece,
-    # Role enum
-    Role,
-    # Roman numeral constants - Major
-    I,
-    II,
-    III,
-    IV,
-    V,
-    VI,
-    VII,
-    # Roman numeral constants - Minor
-    i,
-    ii,
-    iii,
-    iv,
-    v,
-    vi,
-    vii,
-    # Common 7th chords
-    I7,
-    II7,
-    III7,
-    IV7,
-    V7,
-    VI7,
-    VII7,
-    Imaj7,
-    IVmaj7,
-    ii7,
-    iii7,
-    vi7,
-    vii7,
-    # Pattern singletons
-    root_quarters,
-    root_eighths,
-    root_fifths,
-    block_chords,
-    arp,
-    # Drum pattern singletons (Phase 2.5)
-    rock_beat,
-    four_on_floor,
-    backbeat,
-    eighth_hats,
-    shuffle,
-    # Builder classes (for type hints)
-    PieceBuilder,
-    SectionBuilder,
-    TrackBuilder,
-    PatternBuilder,
-    RomanNumeral,
-)
-
-# Pitch utilities (escape hatch for literal notes)
-from pypulang.pitches import (
-    # Core class
-    Pitch,
-    # Note specification functions
-    note,
-    rest,
-    chord,
-    NoteSpec,
-    ChordSpec,
-    REST,
-)
-
-# Playback configuration (available even without optional deps)
-from pypulang.playback.config import (
-    get_default_backend,
-    set_default_backend,
-    get_available_backends,
 )
 
 __all__ = [
@@ -217,6 +223,13 @@ __all__ = [
     "backbeat",
     "eighth_hats",
     "shuffle",
+    "grid",
+    "hits",
+    "riff",
+    "walking_bass",
+    "comp",
+    "snare_roll",
+    "device",
     # Builder classes
     "PieceBuilder",
     "SectionBuilder",

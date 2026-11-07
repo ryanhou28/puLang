@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any, Union
+from typing import Union
 
 
 class Pitch(int):
