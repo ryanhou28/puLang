@@ -1,0 +1,191 @@
+"""
+`lower-intent-to-score`: lay the form out in time and make the slots.
+
+Patterns are not expanded here. Each chord of each part becomes a `score.slot`
+holding a close-position voicing, so later passes can revoice it before any note
+exists. Literal notes have nothing left to decide and go straight into bars.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from fractions import Fraction
+
+from xdsl.context import Context
+from xdsl.dialects.builtin import ModuleOp
+from xdsl.passes import ModulePass
+
+from pypulang.compiler.dialects import intent, score
+from pypulang.compiler.dialects.mus import from_attr
+from pypulang.compiler.locs import in_section
+from pypulang.compiler.notes import NoteRecord, add_notes
+from pypulang.compiler.timeline import Timeline
+from pypulang.ir.intent import Chord, Key, TimeSignature
+from pypulang.resolution import resolve_chord
+
+
+@dataclass
+class _Occurrence:
+    op: intent.SectionOp
+    marker: score.SectionOp
+
+
+def _layout(piece: intent.PieceOp) -> list[_Occurrence]:
+    by_name = {s.section.data: s for s in piece.sections()}
+    order = [s.data for s in piece.form.data] if piece.form is not None else list(by_name.keys())
+    counts: dict[str, int] = {}
+    time = Fraction(0)
+    bar = 1
+    result = []
+    for name in order:
+        if name not in by_name:
+            raise ValueError(f"Unknown section in form: {name}")
+        op = by_name[name]
+        counts[name] = counts.get(name, 0) + 1
+        key = op.key.data if op.key is not None else piece.key.data
+        meter = op.meter.data if op.meter is not None else piece.meter.data
+        bars = op.bars.value.data
+        marker = score.SectionOp(name, counts[name], bar, bars, time, key, meter)
+        marker.location = in_section(name, name, counts[name])
+        result.append(_Occurrence(op, marker))
+        time += bars * meter.beats_per_bar
+        bar += bars
+    return result
+
+
+def _chord_spans(
+    harmony: intent.HarmonyOp, section_beats: Fraction, meter: TimeSignature
+) -> list[tuple[Chord, Fraction, Fraction]]:
+    """(chord, start, duration) in beats from the section's start, stretched to fill it."""
+    changes = harmony.changes()
+    if not changes:
+        return []
+    bars = harmony.unit.data == "bars"
+    total = sum((d for _, d in changes), Fraction(0))
+    total_beats = total * meter.beats_per_bar if bars else total
+    scale = section_beats / total_beats if total_beats > 0 and section_beats > 0 else Fraction(1)
+    spans = []
+    at = Fraction(0)
+    for chord, duration in changes:
+        beats = (duration * meter.beats_per_bar if bars else duration) * scale
+        spans.append((chord, at, beats))
+        at += beats
+    return spans
+
+
+def _first_chord(op: intent.SectionOp) -> Chord | None:
+    harmony = op.harmony()
+    changes = harmony.changes() if harmony is not None else []
+    return changes[0][0] if changes else None
+
+
+def _slots_for(
+    occurrence: _Occurrence,
+    following: Chord | None,
+    track: intent.TrackOp,
+    pattern: intent.PatternOp,
+) -> list[score.SlotOp]:
+    marker = occurrence.marker
+    key: Key = marker.key.data
+    meter: TimeSignature = marker.meter.data
+    harmony = pattern.harmony.owner
+    assert isinstance(harmony, intent.HarmonyOp)
+    spans = _chord_spans(harmony, marker.length, meter)
+    slots = []
+    for index, (chord, at, beats) in enumerate(spans):
+        next_chord = spans[index + 1][0] if index + 1 < len(spans) else following
+        slot = score.SlotOp(
+            kind=pattern.kind.data,
+            chord=chord,
+            key=key,
+            meter=meter,
+            start=marker.start.data + at,
+            dur=beats,
+            pitches=resolve_chord(chord, key, octave=4),
+            params=from_attr(pattern.params),
+            section=marker.tag,
+            octave=track.octave.value.data,
+            velocity=track.velocity.value.data,
+            voicing=track.voicing.data if track.voicing is not None else None,
+            next_chord=next_chord,
+        )
+        slot.location = in_section(
+            f"{marker.section.data}/{track.track.data}/c{index}",
+            marker.section.data,
+            marker.occurrence.value.data,
+        )
+        slots.append(slot)
+    return slots
+
+
+def _literal_records(
+    occurrence: _Occurrence, track: intent.TrackOp, notes: intent.NotesOp
+) -> list[NoteRecord]:
+    start = occurrence.marker.start.data
+    octave = track.octave.value.data
+    default_velocity = track.velocity.value.data
+    records = []
+    for op in notes.body.block.ops:
+        assert isinstance(op, intent.NoteOp)
+        velocity = op.vel.value.data if op.vel is not None else default_velocity
+        records.append(
+            NoteRecord(
+                pitch=op.pitch.value.data + octave * 12,
+                start=start + op.offset.data,
+                dur=op.dur.data,
+                vel=velocity,
+            )
+        )
+    return records
+
+
+@dataclass(frozen=True)
+class LowerIntentToScore(ModulePass):
+    name = "lower-intent-to-score"
+
+    def apply(self, ctx: Context, op: ModuleOp) -> None:
+        pieces = [o for o in op.body.block.ops if isinstance(o, intent.PieceOp)]
+        if len(pieces) != 1:
+            raise ValueError(f"Expected one intent.piece, found {len(pieces)}")
+        piece = pieces[0]
+        occurrences = _layout(piece)
+        timeline = Timeline([o.marker for o in occurrences])
+
+        parts: dict[str, score.PartOp] = {}
+        for index, occurrence in enumerate(occurrences):
+            following = (
+                _first_chord(occurrences[index + 1].op) if index + 1 < len(occurrences) else None
+            )
+            for track in occurrence.op.tracks():
+                if track.muted.value.data:
+                    continue
+                name = track.track.data
+                if name not in parts:
+                    parts[name] = score.PartOp(name, track.role.data, track.instrument.data, [])
+                    parts[name].location = in_section(
+                        f"{occurrence.marker.section.data}/{name}",
+                        occurrence.marker.section.data,
+                        occurrence.marker.occurrence.value.data,
+                    )
+                for content in track.body.block.ops:
+                    if isinstance(content, intent.PatternOp):
+                        for slot in _slots_for(occurrence, following, track, content):
+                            parts[name].body.block.add_op(slot)
+                    elif isinstance(content, intent.NotesOp):
+                        add_notes(
+                            parts[name],
+                            timeline,
+                            _literal_records(occurrence, track, content),
+                        )
+
+        title = piece.title.data
+        result = score.ScoreOp(
+            title,
+            piece.tempo.value.data,
+            piece.key.data,
+            piece.meter.data,
+            [o.marker for o in occurrences] + list(parts.values()),
+        )
+        result.location = piece.location
+        op.body.block.detach_op(piece)
+        op.body.block.add_op(result)
