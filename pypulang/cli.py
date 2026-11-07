@@ -1,0 +1,222 @@
+"""
+The `pulang` command.
+
+    pulang ir song.py --stage score       Print the IR at a stage
+    pulang trace song.py -o build/        Write the IR after every pass
+    pulang midi song.py -o song.mid       Write a MIDI file
+    pulang push song.py                   Make kaiDAW hold the song
+    pulang status song.py                 Say what a push would do
+    pulang pull song.py                   Keep edits made in the DAW
+    pulang edits song.py                  List those edits
+    pulang drop song.py <location>        Forget one of them
+    pulang render song.py -o song.wav     Bounce it
+    pulang watch song.py                  Push every time the file is saved
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+import time
+from fractions import Fraction
+from pathlib import Path
+
+from pypulang.backends.kaidaw import KaidawClient, KaidawError, SongState, pull, push, status
+from pypulang.backends.kaidaw.client import DEFAULT_PORT, WslTransport
+from pypulang.backends.midi import event_to_midi
+from pypulang.compiler import print_ir
+from pypulang.compiler.dialects import event as event_dialect
+from pypulang.compiler.pipeline import STAGES
+from pypulang.songfile import Song, load_song
+
+
+def _client(args: argparse.Namespace) -> KaidawClient:
+    return KaidawClient(port=args.port)
+
+
+def _state(args: argparse.Namespace) -> SongState:
+    return SongState.beside(args.song)
+
+
+def _report(song: Song, result_warnings: list[str]) -> None:
+    for warning in result_warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
+
+def cmd_ir(args: argparse.Namespace) -> int:
+    result = load_song(args.song).compile(until=args.stage)
+    print(print_ir(result.stages[args.stage], locations=args.locations), end="")
+    return 0
+
+
+def cmd_trace(args: argparse.Namespace) -> int:
+    result = load_song(args.song).compile(keep_trace=True)
+    out = Path(args.output)
+    out.mkdir(parents=True, exist_ok=True)
+    for index, (name, module) in enumerate(result.trace):
+        (out / f"{index:02d}-{name}.mlir").write_text(print_ir(module, locations=True))
+    for stage, module in result.stages.items():
+        (out / f"{stage}.mlir").write_text(print_ir(module, locations=True))
+    print(f"Wrote {len(result.trace) + len(result.stages)} files to {out}")
+    return 0
+
+
+def cmd_midi(args: argparse.Namespace) -> int:
+    result = load_song(args.song).compile(until="event")
+    event_to_midi(result.stages["event"]).save(args.output)
+    print(f"Wrote {args.output}")
+    return 0
+
+
+def cmd_push(args: argparse.Namespace) -> int:
+    song = load_song(args.song)
+    result = song.compile()
+    report = push(result.daw, _client(args), _state(args), fresh=args.fresh)
+    _report(song, result.warnings)
+    print(report.summary())
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    song = load_song(args.song)
+    result = song.compile()
+    report = status(result.daw, _client(args), _state(args))
+    _report(song, result.warnings)
+    print(report.summary())
+    return 0
+
+
+def cmd_pull(args: argparse.Namespace) -> int:
+    report = pull(_client(args), _state(args))
+    print(f"Captured {report.captured} edit(s)")
+    return 0
+
+
+def cmd_edits(args: argparse.Namespace) -> int:
+    overrides = _state(args).load_overrides()
+    for location, entry in sorted(overrides.notes.items()):
+        if entry.get("deleted"):
+            print(f"deleted  {location}")
+        else:
+            print(f"edited   {location}: {entry['base']} -> {entry['note']}")
+    for clip, notes in sorted(overrides.added.items()):
+        for item in notes:
+            print(f"drawn    {clip}: {item['note']}")
+    for clip, directive in sorted(overrides.clips.items()):
+        print(f"clip     {clip}: {directive}")
+    if not overrides.count:
+        print("No edits.")
+    return 0
+
+
+def cmd_drop(args: argparse.Namespace) -> int:
+    state = _state(args)
+    overrides = state.load_overrides()
+    if overrides.notes.pop(args.location, None) is None:
+        print(f"No edit at {args.location}", file=sys.stderr)
+        return 1
+    state.save_overrides(overrides)
+    print(f"Dropped {args.location}. The next push restores what the source makes there.")
+    return 0
+
+
+def _seconds(song: Song) -> float:
+    """How long a piece runs, from its section markers and first tempo."""
+    module = song.compile(until="event").stages["event"]
+    stream = next(o for o in module.body.block.ops if isinstance(o, event_dialect.StreamOp))
+    end = max((s.at.data + s.length.data for s in stream.sections()), default=Fraction(0))
+    bpm = stream.tempos()[0].bpm.value.data
+    return float(end) * 60 / bpm
+
+
+def cmd_render(args: argparse.Namespace) -> int:
+    song = load_song(args.song)
+    client = _client(args)
+    result = song.compile()
+    report = push(result.daw, client, _state(args), fresh=args.fresh)
+    print(report.summary())
+
+    seconds = _seconds(song) + args.tail
+    transport = client.transport
+    if isinstance(transport, WslTransport):
+        name = f"pulang-{Path(args.output).stem}.wav"
+        rendered = client.render(f"{transport.share_win}\\{name}", 0.0, seconds)
+        shutil.move(str(transport.share_wsl / name), args.output)
+    else:
+        rendered = client.render(str(Path(args.output).resolve()), 0.0, seconds)
+    print(f"Rendered {rendered['audioSeconds']:.1f}s to {args.output}, peak {rendered['peak']:.3f}")
+    return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    path = Path(args.song)
+    client = _client(args)
+    last = 0.0
+    print(f"Watching {path}. Ctrl-C stops.")
+    while True:
+        modified = path.stat().st_mtime
+        if modified != last:
+            last = modified
+            try:
+                result = load_song(path).compile()
+                print(push(result.daw, client, _state(args)).summary())
+            except (KaidawError, ValueError, KeyError, SyntaxError) as error:
+                # A song mid-edit is often broken. Say so and keep watching.
+                print(f"error: {error}", file=sys.stderr)
+        time.sleep(args.interval)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="pulang", description="Compile music.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, handler, help_text: str) -> argparse.ArgumentParser:
+        sub = commands.add_parser(name, help=help_text)
+        sub.add_argument("song", help="A .py song, or a text file of intent IR")
+        sub.set_defaults(handler=handler)
+        return sub
+
+    def with_port(sub: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        sub.add_argument("--port", type=int, default=DEFAULT_PORT, help="kaiDAW's port")
+        return sub
+
+    ir = command("ir", cmd_ir, "Print the IR at a stage")
+    ir.add_argument("--stage", choices=STAGES, default="intent")
+    ir.add_argument("--locations", action="store_true", help="Include source locations")
+
+    trace = command("trace", cmd_trace, "Write the IR after every pass")
+    trace.add_argument("-o", "--output", default="build")
+
+    midi = command("midi", cmd_midi, "Write a MIDI file")
+    midi.add_argument("-o", "--output", required=True)
+
+    push_cmd = with_port(command("push", cmd_push, "Make kaiDAW hold the song"))
+    push_cmd.add_argument("--fresh", action="store_true", help="Build it from nothing here")
+
+    with_port(command("status", cmd_status, "Say what a push would do"))
+    with_port(command("pull", cmd_pull, "Keep edits made in the DAW"))
+    command("edits", cmd_edits, "List edits made in the DAW")
+    drop = command("drop", cmd_drop, "Forget one edit")
+    drop.add_argument("location")
+
+    render = with_port(command("render", cmd_render, "Push, then bounce to a WAV"))
+    render.add_argument("-o", "--output", required=True)
+    render.add_argument("--tail", type=float, default=2.0, help="Seconds of release to keep")
+    render.add_argument("--fresh", action="store_true", help="Build it from nothing here")
+
+    watch = with_port(command("watch", cmd_watch, "Push every time the file is saved"))
+    watch.add_argument("--interval", type=float, default=0.5)
+
+    args = parser.parse_args(argv)
+    try:
+        return args.handler(args)
+    except KaidawError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

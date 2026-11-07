@@ -34,6 +34,9 @@ dependencies = [
     "xdsl==0.68.0",
 ]
 
+[project.scripts]
+pulang = "pypulang.cli:main"
+
 [project.optional-dependencies]
 # Development dependencies
 dev = [

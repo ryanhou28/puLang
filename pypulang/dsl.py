@@ -35,6 +35,8 @@ from pypulang.ir.intent import (
 )
 from pypulang.lines import parse_line
 from pypulang.midi import realize_to_events, realize_to_midi, save_midi
+from pypulang.reharm import reharmonize as reharmonize_changes
+from pypulang.reharm import transposed_key
 
 if TYPE_CHECKING:
     import mido
@@ -750,6 +752,56 @@ class SectionBuilder:
         )
         self._tracks.append(track)
         return track
+
+    def transform(
+        self,
+        name: str | None = None,
+        reharmonize: str | None = None,
+        transpose: int = 0,
+        register: int = 0,
+        include_content: bool = True,
+    ) -> SectionBuilder:
+        """
+        Make a new section from this one.
+
+        Tracks are copied and follow the new harmony by themselves, because they
+        hold patterns and not notes.
+
+        Args:
+            name: Name of the new section (default "<name>_2")
+            reharmonize: tritone_sub, jazzify, modal_interchange, secondary_dominants
+            transpose: Semitones to move the section's key and literal notes
+            register: Octaves to shift every pitched track
+            include_content: If False, copy only the bars and meter
+
+        Example:
+            chorus = verse.transform("chorus", reharmonize="modal_interchange")
+        """
+        key = self._key or self._piece._key
+        section = self._piece.section(
+            name or f"{self._name}_2",
+            bars=self._bars,
+            key=transposed_key(key, transpose) if transpose else self._key,
+            time_sig=self._time_signature,
+        )
+        if not include_content:
+            return section
+        changes = self._harmony.changes
+        if reharmonize is not None:
+            changes = reharmonize_changes(changes, key, reharmonize)
+        section._harmony = Harmony(changes=list(changes), duration_unit=self._harmony.duration_unit)
+        for track in self._tracks:
+            copied = copy.copy(track)
+            copied._section = section
+            if track._role != Role.RHYTHM:
+                copied._octave_shift = track._octave_shift + register
+            if isinstance(track._content, Notes) and transpose and track._role != Role.RHYTHM:
+                copied._content = Notes(
+                    notes=[replace(n, pitch=n.pitch + transpose) if n.pitch >= 0 else n for n in track._content.notes]
+                )
+            section._tracks.append(copied)
+        section._curves = list(self._curves)
+        return section
 
     def automate(
         self, track: str, target: str, points: list[tuple[float | Fraction, float]]
