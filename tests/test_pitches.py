@@ -279,16 +279,17 @@ class TestDSLIntegration:
         notes = track.content.notes
 
         assert len(notes) == 3
+        # The IR counts in quarter-note beats
         assert notes[0].pitch == 60
-        assert notes[0].duration == Fraction(1, 4)
+        assert notes[0].duration == Fraction(1)
         assert notes[0].offset == Fraction(0)
 
         assert notes[1].pitch == 64
-        assert notes[1].offset == Fraction(1, 4)
+        assert notes[1].offset == Fraction(1)
 
         assert notes[2].pitch == 67
-        assert notes[2].duration == Fraction(1, 2)
-        assert notes[2].offset == Fraction(1, 2)
+        assert notes[2].duration == Fraction(2)
+        assert notes[2].offset == Fraction(2)
 
     def test_track_notes_with_note_function(self):
         """Track.notes() accepts note() specifications."""
@@ -328,11 +329,11 @@ class TestDSLIntegration:
         assert len(notes) == 3
         # First note at offset 0
         assert notes[0].offset == Fraction(0)
-        # Rest at offset 1/4
+        # A quarter rest starts one beat in
         assert notes[1].pitch == -1
-        assert notes[1].offset == Fraction(1, 4)
-        # Third note at offset 1/2
-        assert notes[2].offset == Fraction(1, 2)
+        assert notes[1].offset == Fraction(1)
+        # The third note starts two beats in
+        assert notes[2].offset == Fraction(2)
 
     def test_track_notes_with_chords(self):
         """Track.notes() handles chord() correctly."""
@@ -350,8 +351,8 @@ class TestDSLIntegration:
 
         # First chord: 3 notes at offset 0
         assert len([n for n in notes if n.offset == Fraction(0)]) == 3
-        # Second chord: 3 notes at offset 1/2
-        assert len([n for n in notes if n.offset == Fraction(1, 2)]) == 3
+        # A half note is two beats, so the second chord starts on beat 3
+        assert len([n for n in notes if n.offset == Fraction(2)]) == 3
         # Total 6 notes
         assert len(notes) == 6
 

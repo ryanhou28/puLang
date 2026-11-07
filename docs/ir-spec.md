@@ -480,7 +480,7 @@ class Pattern:
   "pattern_type": "arp",
   "params": {
     "direction": "up",
-    "rate": "1/16",
+    "rate": "1/4",
     "octaves": 1
   }
 }
@@ -1119,7 +1119,7 @@ All IR uses JSON with the following conventions:
           "content": {
             "type": "pattern",
             "pattern_type": "arp",
-            "params": {"direction": "up", "rate": "1/16"}
+            "params": {"direction": "up", "rate": "1/4"}
           },
           "octave_shift": 0,
           "velocity": 80,

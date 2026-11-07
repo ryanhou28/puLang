@@ -170,7 +170,7 @@ class TestDSLToMIDI:
         with piece() as p:
             verse = p.section("verse", bars=1)
             verse.harmony(I)  # C major chord: C, E, G
-            verse.track("keys").pattern(arp.up().rate(0.25))  # 4 notes per beat
+            verse.track("keys").pattern(arp.up().rate(1/16))  # 4 notes per beat
 
         midi = p.to_midi()
 

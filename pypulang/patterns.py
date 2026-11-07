@@ -254,7 +254,7 @@ def block_chords(
 
     Args:
         pattern_params:
-            rate: Note value for hits (default 1 = quarter notes)
+            rate: Beats between hits (default 1 = quarter notes)
     """
     octave_shift = track_params.get("octave_shift", 0)
     velocity = track_params.get("velocity", 100)
@@ -304,13 +304,13 @@ def arp(
     Args:
         pattern_params:
             direction: "up", "down", "updown" (default "up")
-            rate: Note value (default 1/8 = eighth notes)
+            rate: Beats between notes (default 1/2 = eighth notes)
     """
     octave_shift = track_params.get("octave_shift", 0)
     velocity = track_params.get("velocity", 100)
 
     direction = pattern_params.get("direction", "up")
-    rate = pattern_params.get("rate", Fraction(1, 8))
+    rate = pattern_params.get("rate", Fraction(1, 2))
     if isinstance(rate, str):
         rate = Fraction(rate)
     elif not isinstance(rate, Fraction):
@@ -434,13 +434,13 @@ def four_on_floor(
 
     Args:
         pattern_params:
-            hihat_rate: 1/8 (default) or 1/16
+            hihat_rate: Beats between hits (default 1/2 = eighth notes)
     """
     # Lazy import to avoid circular dependency
     from pypulang import drums
 
     velocity = track_params.get("velocity", 100)
-    hihat_rate = pattern_params.get("hihat_rate", Fraction(1, 8))
+    hihat_rate = pattern_params.get("hihat_rate", Fraction(1, 2))
     if not isinstance(hihat_rate, Fraction):
         hihat_rate = Fraction(hihat_rate)
 

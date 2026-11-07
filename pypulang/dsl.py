@@ -353,6 +353,21 @@ shuffle = PatternBuilder("shuffle")
 # -----------------------------------------------------------------------------
 
 
+# Parameters that hold a note value, and so reach the IR as beats.
+_NOTE_VALUE_PARAMS = ("rate", "hihat_rate")
+
+
+def note_value_to_beats(value: Fraction | float | int | str) -> Fraction:
+    """
+    Convert a written note value to quarter-note beats, the unit of the IR.
+
+    The DSL speaks in note values: 1/4 is a quarter note and 1/16 a sixteenth.
+    A float such as 1/3 is read as the fraction it stands for, including when
+    `note()` has already turned it into a Fraction with a huge denominator.
+    """
+    return Fraction(value).limit_denominator(3840) * 4
+
+
 class TrackBuilder:
     """
     Builder for creating tracks with method chaining.
@@ -427,24 +442,26 @@ class TrackBuilder:
         for item in note_list:
             if isinstance(item, NoteSpec):
                 # NoteSpec from note() or rest()
+                beats = note_value_to_beats(item.duration)
                 ir_notes.append(Note(
                     pitch=item.pitch,
-                    duration=item.duration,
+                    duration=beats,
                     velocity=item.velocity,
                     offset=current_offset,
                 ))
-                current_offset += item.duration
+                current_offset += beats
 
             elif isinstance(item, ChordSpec):
                 # ChordSpec from chord() - multiple simultaneous notes
+                beats = note_value_to_beats(item.duration)
                 for pitch in item.pitches:
                     ir_notes.append(Note(
                         pitch=pitch,
-                        duration=item.duration,
+                        duration=beats,
                         velocity=item.velocity,
                         offset=current_offset,
                     ))
-                current_offset += item.duration
+                current_offset += beats
 
             elif isinstance(item, tuple):
                 # Tuple syntax: (pitch, duration) or (pitch, duration, velocity)
@@ -456,13 +473,14 @@ class TrackBuilder:
                 else:
                     raise ValueError(f"Invalid note tuple: {item}. Expected 2 or 3 elements.")
 
+                beats = note_value_to_beats(duration)
                 ir_notes.append(Note(
                     pitch=int(pitch),
-                    duration=Fraction(duration) if not isinstance(duration, Fraction) else duration,
+                    duration=beats,
                     velocity=velocity,
                     offset=current_offset,
                 ))
-                current_offset += Fraction(duration) if not isinstance(duration, Fraction) else duration
+                current_offset += beats
 
             else:
                 raise TypeError(
@@ -495,13 +513,23 @@ class TrackBuilder:
         self._muted = False
         return self
 
+    def _ir_content(self) -> TrackContent | None:
+        """The track's content with note values converted to beats."""
+        if not isinstance(self._content, Pattern):
+            return self._content
+        params = dict(self._content.params)
+        for name in _NOTE_VALUE_PARAMS:
+            if name in params:
+                params[name] = note_value_to_beats(params[name])
+        return Pattern(pattern_type=self._content.pattern_type, params=params)
+
     def _to_ir(self) -> Track:
         """Convert to IR Track object."""
         return Track(
             name=self._name,
             role=self._role.value,
             instrument=self._instrument,
-            content=self._content,
+            content=self._ir_content(),
             octave_shift=self._octave_shift,
             velocity=self._velocity,
             muted=self._muted,

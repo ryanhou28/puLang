@@ -422,7 +422,8 @@ class TestTrackBuilder:
         ir = p.to_ir()
         track = ir.sections[0].tracks[0]
         assert track.content.params.get("direction") == "up"
-        assert track.content.params.get("rate") == 1/16
+        # A sixteenth note reaches the IR as a quarter of a beat
+        assert track.content.params.get("rate") == Fraction(1, 4)
 
     def test_track_octave(self):
         """Track octave shift works."""
