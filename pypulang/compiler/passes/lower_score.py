@@ -9,7 +9,7 @@ from xdsl.context import Context
 from xdsl.dialects.builtin import ModuleOp
 from xdsl.passes import ModulePass
 
-from pypulang.compiler.dialects import event, score
+from pypulang.compiler.dialects import daw, event, score
 from pypulang.compiler.spelling import midi_of
 
 _ARTICULATION_LENGTH = {
@@ -46,6 +46,9 @@ class LowerScoreToEvent(ModulePass):
             )
             marker.location = section.location
             ops.append(marker)
+        for rack in [o for o in top.body.block.ops if isinstance(o, daw.RackOp)]:
+            top.body.block.detach_op(rack)
+            ops.append(rack)
         for part in top.parts():
             notes = []
             for bar in part.bars():
@@ -57,7 +60,12 @@ class LowerScoreToEvent(ModulePass):
                     lowered.location = note.location
                     notes.append(lowered)
             notes.sort(key=lambda n: (n.start.data, n.pitch.value.data))
-            track = event.TrackOp(part.part.data, part.role.data, part.instrument.data, notes)
+            curves = [o for o in part.body.block.ops if isinstance(o, event.CurveOp)]
+            for curve in curves:
+                part.body.block.detach_op(curve)
+            track = event.TrackOp(
+                part.part.data, part.role.data, part.instrument.data, [*notes, *curves]
+            )
             track.location = part.location
             ops.append(track)
         result = event.StreamOp(top.title.data, ops)

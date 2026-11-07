@@ -147,6 +147,45 @@ class TrackOp(IRDLOperation):
 
 
 @irdl_op_definition
+class RackOp(IRDLOperation):
+    """
+    How a track sounds.
+
+    A rack is already in the target's vocabulary, so it is written in this dialect
+    from the start and rides through the higher levels untouched. `lower-event-to-daw`
+    folds it into its track.
+    """
+
+    name = "daw.rack"
+    track = prop_def(StringAttr)
+    volume = opt_prop_def(FloatAttr)
+    pan = opt_prop_def(FloatAttr)
+    color = opt_prop_def(StringAttr)
+    body = region_def("single_block")
+    traits = traits_def(NoTerminator())
+    assembly_format = (
+        "$track (`volume` $volume^)? (`pan` $pan^)? (`color` $color^)? attr-dict-with-keyword $body"
+    )
+
+    def __init__(
+        self,
+        track: str,
+        ops: Sequence,
+        volume: float | None = None,
+        pan: float | None = None,
+        color: str | None = None,
+    ):
+        props: dict[str, Attribute] = {"track": StringAttr(track)}
+        if volume is not None:
+            props["volume"] = float_attr(volume)
+        if pan is not None:
+            props["pan"] = float_attr(pan)
+        if color is not None:
+            props["color"] = StringAttr(color)
+        super().__init__(properties=props, regions=[Region(Block(ops))])
+
+
+@irdl_op_definition
 class PluginOp(IRDLOperation):
     """
     A device on a track, in chain order.

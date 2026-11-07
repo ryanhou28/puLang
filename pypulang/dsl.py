@@ -20,12 +20,15 @@ from typing import TYPE_CHECKING, Any, Iterator, Union
 from pypulang.ir.intent import (
     Chord,
     ChordChange,
+    Curve,
+    Device,
     Harmony,
     Key,
     Note,
     Notes,
     Pattern,
     Piece,
+    Rack,
     Section,
     TimeSignature,
     Track,
@@ -333,6 +336,11 @@ class PatternBuilder:
         return self._pattern_type
 
 
+def device(name: str, identifier: str, **params: float) -> Device:
+    """A plugin for a rack. Parameter names with spaces go through `params`."""
+    return Device(name=name, identifier=identifier, params=dict(params))
+
+
 # Pattern singletons
 root_quarters = PatternBuilder("root_quarters")
 root_eighths = PatternBuilder("root_eighths")
@@ -569,6 +577,7 @@ class SectionBuilder:
         self._time_signature = time_signature
         self._harmony: Harmony = Harmony()
         self._tracks: list[TrackBuilder] = []
+        self._curves: list[Curve] = []
 
     @property
     def name(self) -> str:
@@ -653,6 +662,32 @@ class SectionBuilder:
         self._tracks.append(track)
         return track
 
+    def automate(
+        self, track: str, target: str, points: list[tuple[float | Fraction, float]]
+    ) -> SectionBuilder:
+        """
+        Move a parameter during this section.
+
+        Args:
+            track: Track name
+            target: "<device>.<parameter>", or "mix.volume" for the fader
+            points: (bars from the section start, value 0..1) pairs. Values between
+                points are interpolated by the DAW.
+
+        Example:
+            drop.automate("pad", "synth.A Filter 1 Cutoff", [(0, 0.3), (8, 0.8)])
+        """
+        meter = self._time_signature or self._piece._time_signature
+        converted = [
+            (
+                Fraction(at).limit_denominator(3840) * meter.beats_per_bar,
+                Fraction(value).limit_denominator(100000),
+            )
+            for at, value in points
+        ]
+        self._curves.append(Curve(track=track, target=target, points=converted))
+        return self
+
     def _to_ir(self) -> Section:
         """Convert to IR Section object."""
         return Section(
@@ -662,6 +697,7 @@ class SectionBuilder:
             time_signature=self._time_signature,
             harmony=self._harmony,
             tracks=[t._to_ir() for t in self._tracks],
+            curves=list(self._curves),
         )
 
 
@@ -703,6 +739,7 @@ class PieceBuilder:
         self._title = title
         self._sections: list[SectionBuilder] = []
         self._form: list[str] | None = None
+        self._racks: list[Rack] = []
 
     def section(
         self,
@@ -742,6 +779,42 @@ class PieceBuilder:
         self._sections.append(section)
         return section
 
+    def rack(
+        self,
+        track: str,
+        *devices: Device,
+        volume: float | None = None,
+        pan: float | None = None,
+        color: str | None = None,
+        sends: dict[str, float] | None = None,
+    ) -> PieceBuilder:
+        """
+        Say how a track sounds: its plugin chain, level, and routing.
+
+        Args:
+            track: Track name. It need not have notes, which is how a bus is declared.
+            *devices: Plugins in chain order, the instrument first
+            volume: Fader, normalised (0.74 is unity). None leaves it to the DAW.
+            pan: -1 to 1. None leaves it to the DAW.
+            color: A colour for the DAW to show the track in
+            sends: Destination track name to linear gain
+
+        Example:
+            p.rack("pad", device("synth", SURGE_XT), sends={"verb": 0.4})
+            p.rack("verb", device("reverb", "reverb"))
+        """
+        self._racks.append(
+            Rack(
+                track=track,
+                devices=list(devices),
+                volume=volume,
+                pan=pan,
+                color=color,
+                sends=dict(sends or {}),
+            )
+        )
+        return self
+
     def form(self, sections: list[SectionBuilder | str]) -> PieceBuilder:
         """
         Set the form (section order) for this piece.
@@ -763,6 +836,7 @@ class PieceBuilder:
             time_signature=self._time_signature,
             sections=[s._to_ir() for s in self._sections],
             form=self._form,
+            racks=list(self._racks),
         )
 
     def to_midi(self, ticks_per_beat: int = 480) -> "mido.MidiFile":

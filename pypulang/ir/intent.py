@@ -455,6 +455,111 @@ class Track:
 
 
 # -----------------------------------------------------------------------------
+# Racks and Automation
+# -----------------------------------------------------------------------------
+
+
+@dataclass
+class Device:
+    """
+    A plugin on a track.
+
+    Attributes:
+        name: Local name, which automation targets refer to
+        identifier: The plugin's identifier in the DAW
+        params: Published parameter name to normalised value (0..1)
+    """
+
+    name: str
+    identifier: str
+    params: dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "identifier": self.identifier, "params": self.params}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Device:
+        return cls(name=d["name"], identifier=d["identifier"], params=d.get("params", {}))
+
+
+@dataclass
+class Rack:
+    """
+    How a track sounds: its plugin chain, level and routing.
+
+    A rack is written once per track, not per section. A track may have a rack and
+    no notes, which is how a shared reverb bus is declared.
+
+    Attributes:
+        track: Track name
+        devices: Plugins, in chain order
+        volume: Fader, normalised (0.74 is unity), or None to leave it alone
+        pan: -1 to 1, or None to leave it alone
+        color: A colour for the DAW to show, or None
+        sends: Destination track name to linear gain
+    """
+
+    track: str
+    devices: list[Device] = field(default_factory=list)
+    volume: float | None = None
+    pan: float | None = None
+    color: str | None = None
+    sends: dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "track": self.track,
+            "devices": [d.to_dict() for d in self.devices],
+            "volume": self.volume,
+            "pan": self.pan,
+            "color": self.color,
+            "sends": self.sends,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Rack:
+        return cls(
+            track=d["track"],
+            devices=[Device.from_dict(x) for x in d.get("devices", [])],
+            volume=d.get("volume"),
+            pan=d.get("pan"),
+            color=d.get("color"),
+            sends=d.get("sends", {}),
+        )
+
+
+@dataclass
+class Curve:
+    """
+    A parameter moving during a section.
+
+    Attributes:
+        track: Track name
+        target: "<device>.<parameter>", or "mix.volume" / "mix.pan" for the fader
+        points: (beats from the section start, value 0..1) pairs
+    """
+
+    track: str
+    target: str
+    points: list[tuple[Fraction, Fraction]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "track": self.track,
+            "target": self.target,
+            "points": [[str(t), str(v)] for t, v in self.points],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Curve:
+        return cls(
+            track=d["track"],
+            target=d["target"],
+            points=[(Fraction(t), Fraction(v)) for t, v in d.get("points", [])],
+        )
+
+
+# -----------------------------------------------------------------------------
 # Section
 # -----------------------------------------------------------------------------
 
@@ -471,6 +576,7 @@ class Section:
         time_signature: Override time signature (None inherits from piece)
         harmony: Chord progression
         tracks: List of tracks in this section
+        curves: Parameter automation during this section
     """
 
     name: str
@@ -479,6 +585,7 @@ class Section:
     time_signature: TimeSignature | None = None
     harmony: Harmony = field(default_factory=Harmony)
     tracks: list[Track] = field(default_factory=list)
+    curves: list[Curve] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -489,6 +596,7 @@ class Section:
             "time_signature": self.time_signature.to_dict() if self.time_signature else None,
             "harmony": self.harmony.to_dict(),
             "tracks": [t.to_dict() for t in self.tracks],
+            "curves": [c.to_dict() for c in self.curves],
         }
 
     @classmethod
@@ -502,6 +610,7 @@ class Section:
             else None,
             harmony=Harmony.from_dict(d["harmony"]) if d.get("harmony") else Harmony(),
             tracks=[Track.from_dict(t) for t in d.get("tracks", [])],
+            curves=[Curve.from_dict(c) for c in d.get("curves", [])],
         )
 
 
@@ -522,6 +631,7 @@ class Piece:
         time_signature: Time signature
         sections: List of sections
         form: Section names in order (None for linear order)
+        racks: How each track sounds
     """
 
     tempo: float = 120.0
@@ -530,6 +640,7 @@ class Piece:
     sections: list[Section] = field(default_factory=list)
     title: str | None = None
     form: list[str] | None = None
+    racks: list[Rack] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -540,6 +651,7 @@ class Piece:
             "time_signature": self.time_signature.to_dict(),
             "sections": [s.to_dict() for s in self.sections],
             "form": self.form,
+            "racks": [r.to_dict() for r in self.racks],
         }
 
     @classmethod
@@ -553,6 +665,7 @@ class Piece:
             else TimeSignature(4, 4),
             sections=[Section.from_dict(s) for s in d.get("sections", [])],
             form=d.get("form"),
+            racks=[Rack.from_dict(r) for r in d.get("racks", [])],
         )
 
     def to_json(self) -> str:

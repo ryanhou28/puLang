@@ -15,7 +15,7 @@ from xdsl.context import Context
 from xdsl.dialects.builtin import ModuleOp
 from xdsl.passes import ModulePass
 
-from pypulang.compiler.dialects import intent, score
+from pypulang.compiler.dialects import daw, event, intent, score
 from pypulang.compiler.dialects.mus import from_attr
 from pypulang.compiler.locs import in_section
 from pypulang.compiler.notes import NoteRecord, add_notes
@@ -177,6 +177,21 @@ class LowerIntentToScore(ModulePass):
                             timeline,
                             _literal_records(occurrence, track, content),
                         )
+            for curve in occurrence.op.curves():
+                name = curve.track.data
+                if name not in parts:
+                    # Automation on a track with no notes, such as a bus.
+                    parts[name] = score.PartOp(name, "harmony", "", [])
+                start = occurrence.marker.start.data
+                lowered = event.CurveOp(
+                    curve.target.data, [(start + t, v) for t, v in curve.point_list()]
+                )
+                lowered.location = curve.location
+                parts[name].body.block.add_op(lowered)
+
+        racks = [o for o in piece.body.block.ops if isinstance(o, daw.RackOp)]
+        for rack in racks:
+            piece.body.block.detach_op(rack)
 
         title = piece.title.data
         result = score.ScoreOp(
@@ -184,7 +199,7 @@ class LowerIntentToScore(ModulePass):
             piece.tempo.value.data,
             piece.key.data,
             piece.meter.data,
-            [o.marker for o in occurrences] + list(parts.values()),
+            [*racks, *[o.marker for o in occurrences], *parts.values()],
         )
         result.location = piece.location
         op.body.block.detach_op(piece)

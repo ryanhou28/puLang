@@ -94,6 +94,37 @@ def _clips(
     return clips, inexact, clipped
 
 
+def _automations(track: event.TrackOp) -> list[daw.AutomationOp]:
+    """One automation op per target, joining a curve's occurrences across the form."""
+    merged: dict[str, list[tuple[int, float]]] = {}
+    for curve in track.curves():
+        points = merged.setdefault(curve.target.data, [])
+        points.extend((ticks(at), float(value)) for at, value in curve.point_list())
+    result = []
+    for target, points in merged.items():
+        device, _, param = target.partition(".")
+        if not param:
+            raise ValueError(f"Automation target needs a device: {target!r}")
+        result.append(daw.AutomationOp(device, param, sorted(points)))
+    return result
+
+
+def _track_with_rack(name: str, role: str, body: list, rack: daw.RackOp | None) -> daw.TrackOp:
+    if rack is None:
+        return daw.TrackOp(name, role, body)
+    devices = list(rack.body.block.ops)
+    for op in devices:
+        rack.body.block.detach_op(op)
+    return daw.TrackOp(
+        name,
+        role,
+        [*devices, *body],
+        volume=rack.volume.value.data if rack.volume is not None else None,
+        pan=rack.pan.value.data if rack.pan is not None else None,
+        color=rack.color.data if rack.color is not None else None,
+    )
+
+
 @dataclass(frozen=True)
 class LowerEventToDaw(ModulePass):
     name = "lower-event-to-daw"
@@ -114,14 +145,25 @@ class LowerEventToDaw(ModulePass):
                 last_meter = meter
             ops.append(daw.MarkerOp(ticks(section.at.data), section.tag.data))
 
+        racks = {o.track.data: o for o in stream.body.block.ops if isinstance(o, daw.RackOp)}
         inexact = 0
         clipped = 0
         for track in stream.tracks():
             clips, track_inexact, track_clipped = _clips(track, sections)
             inexact += track_inexact
             clipped += track_clipped
-            lowered = daw.TrackOp(track.track.data, track.role.data, clips)
+            lowered = _track_with_rack(
+                track.track.data,
+                track.role.data,
+                [*clips, *_automations(track)],
+                racks.pop(track.track.data, None),
+            )
             lowered.location = track.location
+            ops.append(lowered)
+        # A rack with no notes is a real track: a return bus, usually.
+        for name, rack in racks.items():
+            lowered = _track_with_rack(name, "harmony", [], rack)
+            lowered.location = rack.location
             ops.append(lowered)
 
         if inexact:

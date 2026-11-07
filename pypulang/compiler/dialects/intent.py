@@ -139,6 +139,9 @@ class SectionOp(IRDLOperation):
     def tracks(self) -> list[TrackOp]:
         return [op for op in self.body.block.ops if isinstance(op, TrackOp)]
 
+    def curves(self) -> list[CurveOp]:
+        return [op for op in self.body.block.ops if isinstance(op, CurveOp)]
+
 
 @irdl_op_definition
 class HarmonyOp(IRDLOperation):
@@ -260,8 +263,40 @@ class NoteOp(IRDLOperation):
         super().__init__(properties=props)
 
 
+@irdl_op_definition
+class CurveOp(IRDLOperation):
+    """
+    A parameter moving during a section.
+
+    `target` is "<device>.<parameter>". `points` alternates beats from the section
+    start and a value from 0 to 1.
+    """
+
+    name = "intent.curve"
+    track = prop_def(StringAttr)
+    target = prop_def(StringAttr)
+    points = prop_def(ArrayAttr)
+    assembly_format = "$track `target` $target $points attr-dict"
+
+    def __init__(self, track: str, target: str, points: Sequence[tuple[Fraction, Fraction]]):
+        flat: list[Fraction] = []
+        for at, value in points:
+            flat.extend((Fraction(at), Fraction(value)))
+        super().__init__(
+            properties={
+                "track": StringAttr(track),
+                "target": StringAttr(target),
+                "points": to_attr(flat),
+            }
+        )
+
+    def point_list(self) -> list[tuple[Fraction, Fraction]]:
+        values = [a.data for a in self.points.data]
+        return list(zip(values[0::2], values[1::2], strict=True))
+
+
 IntentDialect = Dialect(
     "intent",
-    [PieceOp, SectionOp, HarmonyOp, TrackOp, PatternOp, NotesOp, NoteOp],
+    [PieceOp, SectionOp, HarmonyOp, TrackOp, PatternOp, NotesOp, NoteOp, CurveOp],
     [HarmonyType],
 )

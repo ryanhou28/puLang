@@ -1,0 +1,710 @@
+"""
+Keeping a song and a kaiDAW project in step.
+
+The rule that decides everything here is ownership:
+
+    The source owns generated notes, sections and tempo.
+    The DAW owns plugin state, the mix, automation it drew, and any clip made by hand.
+
+A plugin parameter or fader the source declares is only written when the source
+value changes, so a knob turned in the DAW stays turned until the source says
+otherwise.
+
+`push` runs: capture DAW edits, apply overrides to the compiled project, diff, and
+send one transaction. Undoing that transaction in the DAW undoes the recompile.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Any
+
+from xdsl.dialects.builtin import IntegerAttr, ModuleOp, i64
+
+from pypulang.backends.kaidaw.client import KaidawClient, KaidawError
+from pypulang.backends.kaidaw.state import Lock, Overrides, SongState
+from pypulang.compiler.dialects import daw
+from pypulang.compiler.dialects.mus import from_attr
+from pypulang.compiler.locs import loc_key, name_loc
+
+
+@dataclass
+class SyncReport:
+    """What a sync did, in terms a person can check."""
+
+    operations: int = 0
+    tracks_created: int = 0
+    clips_created: int = 0
+    clips_deleted: int = 0
+    notes_added: int = 0
+    notes_updated: int = 0
+    notes_deleted: int = 0
+    notes_unchanged: int = 0
+    captured: int = 0
+    stale: list[str] = field(default_factory=list)
+    orphaned: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    revision: int | None = None
+
+    def summary(self) -> str:
+        lines = [
+            f"{self.operations} operations: "
+            f"{self.notes_added} notes added, {self.notes_updated} updated, "
+            f"{self.notes_deleted} deleted, {self.notes_unchanged} unchanged; "
+            f"{self.tracks_created} tracks, {self.clips_created} clips created, "
+            f"{self.clips_deleted} clips deleted"
+        ]
+        if self.captured:
+            lines.append(f"Kept {self.captured} edit(s) made in the DAW")
+        lines.extend(f"Stale edit: {s}" for s in self.stale)
+        lines.extend(f"Orphaned edit: {s}" for s in self.orphaned)
+        lines.extend(self.warnings)
+        return "\n".join(lines)
+
+
+def _project(module: ModuleOp) -> daw.ProjectOp:
+    for op in module.body.block.ops:
+        if isinstance(op, daw.ProjectOp):
+            return op
+    raise ValueError("Expected a daw.project")
+
+
+def _note_of(wire: dict[str, Any]) -> list[int]:
+    return [wire["pitch"], wire["start"], wire["duration"], wire["velocity"]]
+
+
+def _wire_note(note: list[int] | tuple[int, ...], note_id: str | None = None) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "pitch": note[0],
+        "start": note[1],
+        "duration": note[2],
+        "velocity": note[3],
+    }
+    if note_id is not None:
+        result["id"] = note_id
+    return result
+
+
+class DawState:
+    """A detail projection, indexed."""
+
+    def __init__(self, projection: dict[str, Any]):
+        self.revision: int = projection["revision"]
+        self.tempo_map: list[dict[str, Any]] = projection.get("tempoMap", [])
+        self.tracks = {t["id"]: t for t in projection["tracks"]}
+        self.clips = {c["id"]: c for c in projection["clips"]}
+        self.plugins = {p["id"]: p for p in projection["plugins"]}
+
+    def notes(self, clip_id: str) -> dict[str, list[int]]:
+        return {n["id"]: _note_of(n) for n in self.clips[clip_id].get("notes", [])}
+
+    def track_plugin(self, track_id: str, name_prefix: str) -> str | None:
+        for plugin_id in self.tracks[track_id]["pluginIds"]:
+            if self.plugins[plugin_id]["name"].startswith(name_prefix):
+                return plugin_id
+        return None
+
+
+# -----------------------------------------------------------------------------
+# Capture: what changed in the DAW since the last push
+# -----------------------------------------------------------------------------
+
+
+def capture(lock: Lock, overrides: Overrides, state: DawState) -> int:
+    """
+    Record every hand edit since the last push in `overrides`.
+
+    A note missing from its clip was deleted by a person, and that is an edit like
+    any other. Treating it as "nothing to preserve" brings the note back on the next
+    push, because kaiDAW creates a note when it is sent an id it does not know.
+
+    Returns:
+        How many edits this call recorded
+    """
+    captured = 0
+    track_names = {info["id"]: name for name, info in lock.tracks.items()}
+
+    for clip_key, info in lock.clips.items():
+        live = state.clips.get(info["id"])
+        if live is None:
+            if not overrides.clips.get(clip_key, {}).get("deleted"):
+                overrides.clips[clip_key] = {"deleted": True}
+                captured += 1
+            continue
+
+        moved = overrides.clips.setdefault(clip_key, {})
+        for field_name, wire_name in (("start", "start"), ("length", "length")):
+            if live[wire_name] != info[field_name]:
+                if moved.get(field_name) != live[wire_name]:
+                    captured += 1
+                moved[field_name] = live[wire_name]
+        if live["trackId"] != lock.tracks[info["track"]]["id"]:
+            name = track_names.get(live["trackId"])
+            if name is not None and moved.get("track") != name:
+                moved["track"] = name
+                captured += 1
+        if not moved:
+            del overrides.clips[clip_key]
+
+        live_notes = state.notes(info["id"])
+        drawn = {item["key"]: item for item in overrides.added.get(clip_key, [])}
+        known = set()
+        for loc, entry in lock.notes_in(clip_key).items():
+            known.add(entry["id"])
+            now = live_notes.get(entry["id"])
+            if now == entry["note"]:
+                continue
+            captured += 1
+            if loc in drawn:
+                # A note drawn by hand has no source to fall back on: it simply follows
+                # the DAW, and deleting it deletes it.
+                if now is None:
+                    overrides.added[clip_key].remove(drawn[loc])
+                else:
+                    drawn[loc]["note"] = now
+            else:
+                existing = overrides.notes.get(loc)
+                base = existing["base"] if existing else entry["note"]
+                if now is None:
+                    if existing and existing.get("deleted"):
+                        captured -= 1
+                    else:
+                        overrides.notes[loc] = {"deleted": True, "base": base}
+                elif now == base:
+                    overrides.notes.pop(loc, None)
+                else:
+                    overrides.notes[loc] = {"note": now, "base": base}
+            if now is not None:
+                entry["note"] = now
+
+        for note_id, note in live_notes.items():
+            if note_id not in known:
+                key = f"{clip_key}/added/{note[1]}:{note[0]}:{note_id}"
+                overrides.added.setdefault(clip_key, []).append({"key": key, "note": note})
+                lock.notes[key] = {"clip": clip_key, "id": note_id, "note": note}
+                captured += 1
+    return captured
+
+
+# -----------------------------------------------------------------------------
+# Overrides: the compile step that keeps hand edits
+# -----------------------------------------------------------------------------
+
+
+def _track_ops(project: daw.ProjectOp) -> dict[str, daw.TrackOp]:
+    return {t.track.data: t for t in project.tracks()}
+
+
+def apply_overrides(module: ModuleOp, overrides: Overrides, report: SyncReport) -> None:
+    """
+    Rewrite a compiled project so it includes every edit made in the DAW.
+
+    An edit whose note the source no longer makes is kept as a plain note and
+    reported, because silently dropping work is the one thing this must not do.
+    """
+    project = _project(module)
+    tracks = _track_ops(project)
+    seen: set[str] = set()
+
+    for track in project.tracks():
+        for clip in track.clips():
+            key = clip.key.data
+            directive = overrides.clips.get(key, {})
+            if directive.get("deleted"):
+                track.body.block.detach_op(clip)
+                seen.update(loc_key(n.location) for n in clip.notes())
+                continue
+            if "start" in directive:
+                clip.properties["start"] = IntegerAttr(directive["start"], i64)
+            if "length" in directive:
+                clip.properties["length"] = IntegerAttr(directive["length"], i64)
+            if "track" in directive and directive["track"] in tracks:
+                track.body.block.detach_op(clip)
+                tracks[directive["track"]].body.block.add_op(clip)
+
+            for note in clip.notes():
+                loc = loc_key(note.location)
+                entry = overrides.notes.get(loc)
+                if entry is None:
+                    continue
+                seen.add(loc)
+                lowered = list(note.as_tuple())
+                if lowered != entry["base"]:
+                    report.stale.append(
+                        f"{loc}: edited when the source gave {entry['base']}, "
+                        f"source now gives {lowered}"
+                    )
+                if entry.get("deleted"):
+                    clip.body.block.detach_op(note)
+                else:
+                    replacement = daw.NoteOp(*entry["note"])
+                    replacement.location = note.location
+                    clip.body.block.insert_op_before(replacement, note)
+                    clip.body.block.detach_op(note)
+
+    clips = {c.key.data: c for t in project.tracks() for c in t.clips()}
+    for loc, entry in overrides.notes.items():
+        if loc in seen:
+            continue
+        report.orphaned.append(
+            f"{loc}: the source no longer makes this note"
+            + ("" if entry.get("deleted") else "; keeping the edited note")
+        )
+        clip_key = "/".join(loc.split("/")[:2])
+        if not entry.get("deleted") and clip_key in clips:
+            kept = daw.NoteOp(*entry["note"])
+            kept.location = name_loc(loc)
+            clips[clip_key].body.block.add_op(kept)
+
+    for clip_key, added in overrides.added.items():
+        if clip_key in clips:
+            for item in added:
+                note = daw.NoteOp(*item["note"])
+                note.location = name_loc(item["key"])
+                clips[clip_key].body.block.add_op(note)
+
+
+# -----------------------------------------------------------------------------
+# Plan: the difference between the project we want and the one that exists
+# -----------------------------------------------------------------------------
+
+
+def _schema(lock: Lock, state: DawState, identifier: str, plugin_id: str) -> dict[str, str]:
+    """Published parameter name to parameter id, cached per plugin type."""
+    if identifier not in lock.schemas and plugin_id in state.plugins:
+        plugin = state.plugins[plugin_id]
+        lock.schemas[identifier] = dict(
+            zip(plugin["parameterNames"], plugin["parameters"], strict=True)
+        )
+    return lock.schemas.get(identifier, {})
+
+
+def _plan_structure(
+    project: daw.ProjectOp, lock: Lock, state: DawState, report: SyncReport
+) -> list[dict[str, Any]]:
+    """Tempo, tracks, devices, clips and notes: everything that needs no plugin schema."""
+    ops: list[dict[str, Any]] = []
+
+    wanted_tempo = [{"at": t.at.value.data, "bpm": t.bpm.value.data} for t in project.tempos()]
+    current_tempo = [{"at": p["at"], "bpm": p["bpm"]} for p in state.tempo_map]
+    if wanted_tempo and wanted_tempo != current_tempo:
+        ops.append({"type": "SetTempoMap", "points": wanted_tempo})
+
+    wanted_clips: set[str] = set()
+    for track in project.tracks():
+        name = track.track.data
+        info = lock.tracks.get(name)
+        devices = track.plugins()
+        if info is None or info["id"] not in state.tracks:
+            track_ref = f"$track_{len(ops)}"
+            ops.append(
+                {
+                    "type": "CreateTrack",
+                    "alias": track_ref,
+                    "name": name,
+                    "withInstrument": not devices,
+                }
+            )
+            report.tracks_created += 1
+        else:
+            track_ref = info["id"]
+
+        ops.extend(_plan_mix(track, track_ref, info))
+        ops.extend(_plan_devices(track, track_ref, lock))
+
+        for clip in track.clips():
+            wanted_clips.add(clip.key.data)
+            ops.extend(_plan_clip(clip, track_ref, lock, state, report))
+
+    for clip_key, info in lock.clips.items():
+        if clip_key not in wanted_clips and info["id"] in state.clips:
+            ops.append({"type": "DeleteClip", "clipId": info["id"]})
+            report.clips_deleted += 1
+    return ops
+
+
+def _plan_mix(
+    track: daw.TrackOp, track_ref: str, info: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    change: dict[str, Any] = {}
+    last = info or {}
+    if track.volume is not None and last.get("volume") != track.volume.value.data:
+        change["volume"] = track.volume.value.data
+    if track.pan is not None and last.get("pan") != track.pan.value.data:
+        change["pan"] = track.pan.value.data
+    if track.color is not None and last.get("color") != track.color.data:
+        change["color"] = track.color.data
+    if not change:
+        return []
+    return [{"type": "SetTrackState", "trackId": track_ref, **change}]
+
+
+def _plan_devices(track: daw.TrackOp, track_ref: str, lock: Lock) -> list[dict[str, Any]]:
+    ops: list[dict[str, Any]] = []
+    for index, device in enumerate(track.plugins()):
+        key = f"{track.track.data}/{device.device.data}"
+        known = lock.devices.get(key)
+        if known is not None and known["identifier"] == device.identifier.data:
+            continue
+        if known is not None:
+            ops.append({"type": "RemovePlugin", "pluginId": known["id"]})
+        alias = f"$dev_{track.track.data}_{index}".replace(" ", "_")
+        ops.append(
+            {
+                "type": "AddPlugin",
+                "alias": alias,
+                "trackId": track_ref,
+                "identifier": device.identifier.data,
+            }
+        )
+        # AddPlugin appends after the fader and meter, where an instrument would
+        # bypass both.
+        ops.append({"type": "MovePlugin", "pluginId": alias, "index": index})
+    return ops
+
+
+def _plan_clip(
+    clip: daw.ClipOp, track_ref: str, lock: Lock, state: DawState, report: SyncReport
+) -> list[dict[str, Any]]:
+    key = clip.key.data
+    info = lock.clips.get(key)
+    wanted = {loc_key(n.location): list(n.as_tuple()) for n in clip.notes()}
+
+    if info is None or info["id"] not in state.clips:
+        report.clips_created += 1
+        report.notes_added += len(wanted)
+        return [
+            {
+                "type": "CreateClip",
+                "alias": f"$clip_{key}".replace("#", "_").replace("/", "_").replace(" ", "_"),
+                "trackId": track_ref,
+                "name": key,
+                "start": clip.start.value.data,
+                "length": clip.length.value.data,
+                "notes": [_wire_note(n) for n in wanted.values()],
+            }
+        ]
+
+    ops: list[dict[str, Any]] = []
+    clip_id = info["id"]
+    live = state.clips[clip_id]
+    if live["start"] != clip.start.value.data:
+        ops.append({"type": "MoveClip", "clipId": clip_id, "start": clip.start.value.data})
+    if live["length"] != clip.length.value.data:
+        ops.append({"type": "ResizeClip", "clipId": clip_id, "length": clip.length.value.data})
+
+    live_notes = state.notes(clip_id)
+    known = lock.notes_in(key)
+    upserts: list[dict[str, Any]] = []
+    for loc, note in wanted.items():
+        entry = known.get(loc)
+        note_id = entry["id"] if entry else None
+        current = live_notes.get(note_id) if note_id else None
+        if current == note:
+            report.notes_unchanged += 1
+        elif current is None:
+            upserts.append(_wire_note(note))
+            report.notes_added += 1
+        else:
+            upserts.append(_wire_note(note, note_id))
+            report.notes_updated += 1
+    deletions = [
+        entry["id"]
+        for loc, entry in known.items()
+        if loc not in wanted and entry["id"] in live_notes
+    ]
+    report.notes_deleted += len(deletions)
+    if upserts:
+        ops.append({"type": "UpsertNotes", "clipId": clip_id, "notes": upserts})
+    if deletions:
+        ops.append({"type": "DeleteNotes", "clipId": clip_id, "noteIds": deletions})
+    return ops
+
+
+def _plan_parameters(
+    project: daw.ProjectOp, lock: Lock, state: DawState, report: SyncReport
+) -> list[dict[str, Any]]:
+    """Parameters, automation and sends: these need ids that exist only after structure."""
+    ops: list[dict[str, Any]] = []
+    for track in project.tracks():
+        track_name = track.track.data
+        track_id = lock.tracks[track_name]["id"]
+        for device in track.plugins():
+            key = f"{track_name}/{device.device.data}"
+            entry = lock.devices[key]
+            schema = _schema(lock, state, entry["identifier"], entry["id"])
+            for name, value in _params(device).items():
+                if entry["params"].get(name) == value:
+                    continue
+                if name not in schema:
+                    report.warnings.append(f"{key}: no parameter named {name!r}")
+                    continue
+                ops.append(
+                    {
+                        "type": "SetPluginParameter",
+                        "pluginId": entry["id"],
+                        "parameterId": schema[name],
+                        "value": value,
+                    }
+                )
+
+        for automation in track.automations():
+            target = f"{track_name}/{automation.device.data}/{automation.param.data}"
+            points = [[t, v] for t, v in automation.point_list()]
+            if lock.automations.get(target) == points:
+                continue
+            resolved = _resolve_target(track_id, automation, lock, state, track_name)
+            if resolved is None:
+                report.warnings.append(f"{target}: nothing to automate")
+                continue
+            ops.append(
+                {
+                    "type": "SetAutomationPoints",
+                    "pluginId": resolved[0],
+                    "parameterId": resolved[1],
+                    "points": [{"at": t, "value": v} for t, v in points],
+                }
+            )
+
+        for send in track.sends():
+            key = f"{track_name}>{send.destination.data}"
+            if key in lock.sends:
+                continue
+            ops.append(
+                {
+                    "type": "CreateSend",
+                    "fromTrackId": track_id,
+                    "toTrackId": lock.tracks[send.destination.data]["id"],
+                    "gain": send.gain.value.data,
+                }
+            )
+    return ops
+
+
+def _params(device: daw.PluginOp) -> dict[str, float]:
+    return {k: float(v) for k, v in from_attr(device.params).items()}
+
+
+def _resolve_target(
+    track_id: str,
+    automation: daw.AutomationOp,
+    lock: Lock,
+    state: DawState,
+    track_name: str,
+) -> tuple[str, str] | None:
+    """The plugin and parameter id an automation curve lands on."""
+    device = automation.device.data
+    param = automation.param.data
+    if device == "mix":
+        plugin_id = state.track_plugin(track_id, "Volume & Pan")
+        return (plugin_id, param) if plugin_id else None
+    entry = lock.devices.get(f"{track_name}/{device}")
+    if entry is None:
+        return None
+    schema = _schema(lock, state, entry["identifier"], entry["id"])
+    return (entry["id"], schema[param]) if param in schema else None
+
+
+# -----------------------------------------------------------------------------
+# Recording what the DAW now holds
+# -----------------------------------------------------------------------------
+
+
+def _record(project: daw.ProjectOp, lock: Lock, state: DawState, aliases: dict[str, str]) -> None:
+    """Update the lock from a fresh projection, once the transaction has landed."""
+    by_name = {t["name"]: t["id"] for t in state.tracks.values()}
+    by_clip_name: dict[str, str] = {}
+    for clip_id, clip in state.clips.items():
+        by_clip_name.setdefault(clip["name"], clip_id)
+
+    new_notes: dict[str, dict[str, Any]] = {}
+    new_clips: dict[str, dict[str, Any]] = {}
+    for track in project.tracks():
+        name = track.track.data
+        previous = lock.tracks.get(name, {})
+        track_id = previous.get("id") if previous.get("id") in state.tracks else by_name[name]
+        lock.tracks[name] = {
+            "id": track_id,
+            "volume": track.volume.value.data
+            if track.volume is not None
+            else previous.get("volume"),
+            "pan": track.pan.value.data if track.pan is not None else previous.get("pan"),
+            "color": track.color.data if track.color is not None else previous.get("color"),
+        }
+        for index, device in enumerate(track.plugins()):
+            key = f"{name}/{device.device.data}"
+            alias = f"$dev_{name}_{index}".replace(" ", "_")
+            if alias in aliases:
+                lock.devices[key] = {
+                    "id": aliases[alias],
+                    "identifier": device.identifier.data,
+                    "params": {},
+                }
+
+        for clip in track.clips():
+            key = clip.key.data
+            previous_clip = lock.clips.get(key)
+            if previous_clip is not None and previous_clip["id"] in state.clips:
+                clip_id = previous_clip["id"]
+            else:
+                clip_id = by_clip_name[key]
+            new_clips[key] = {
+                "id": clip_id,
+                "track": name,
+                "start": clip.start.value.data,
+                "length": clip.length.value.data,
+            }
+            _record_notes(clip, key, clip_id, lock, state, new_notes)
+    lock.clips = new_clips
+    lock.notes = new_notes
+
+
+def _record_notes(
+    clip: daw.ClipOp,
+    key: str,
+    clip_id: str,
+    lock: Lock,
+    state: DawState,
+    into: dict[str, dict[str, Any]],
+) -> None:
+    live = state.notes(clip_id)
+    claimed: set[str] = set()
+    pending: list[tuple[str, list[int]]] = []
+    for note in clip.notes():
+        loc = loc_key(note.location)
+        wanted = list(note.as_tuple())
+        previous = lock.notes.get(loc)
+        if previous is not None and previous["id"] in live and live[previous["id"]] == wanted:
+            into[loc] = {"clip": key, "id": previous["id"], "note": wanted}
+            claimed.add(previous["id"])
+        else:
+            pending.append((loc, wanted))
+
+    # Notes created by this push have ids we were not told. They are matched on
+    # content, which is exact because we wrote that content a moment ago.
+    unclaimed: dict[tuple[int, ...], list[str]] = defaultdict(list)
+    for note_id, note in live.items():
+        if note_id not in claimed:
+            unclaimed[tuple(note)].append(note_id)
+    for loc, wanted in pending:
+        ids = unclaimed.get(tuple(wanted))
+        if not ids:
+            raise KaidawError(f"{loc}: {wanted} did not arrive in clip {clip_id}")
+        into[loc] = {"clip": key, "id": ids.pop(), "note": wanted}
+
+
+def _record_parameters(project: daw.ProjectOp, lock: Lock) -> None:
+    for track in project.tracks():
+        name = track.track.data
+        for device in track.plugins():
+            entry = lock.devices[f"{name}/{device.device.data}"]
+            entry["params"].update(_params(device))
+        for automation in track.automations():
+            target = f"{name}/{automation.device.data}/{automation.param.data}"
+            lock.automations[target] = [[t, v] for t, v in automation.point_list()]
+        for send in track.sends():
+            lock.sends[f"{name}>{send.destination.data}"] = send.gain.value.data
+
+
+# -----------------------------------------------------------------------------
+# The commands
+# -----------------------------------------------------------------------------
+
+
+def _check_lock(lock: Lock, state: DawState) -> None:
+    if lock.empty:
+        return
+    ids = {info["id"] for info in lock.tracks.values()}
+    if not ids & set(state.tracks):
+        raise KaidawError(
+            "None of this song's tracks exist in the open project. Open the project it "
+            "was pushed to, or push with fresh=True to build it again here."
+        )
+
+
+def pull(client: KaidawClient, song: SongState) -> SyncReport:
+    """Record edits made in the DAW into the song's overrides."""
+    lock = song.load_lock()
+    overrides = song.load_overrides()
+    state = DawState(client.projection())
+    _check_lock(lock, state)
+    report = SyncReport(revision=state.revision)
+    report.captured = capture(lock, overrides, state)
+    song.save_overrides(overrides)
+    song.save_lock(lock)
+    return report
+
+
+def status(module: ModuleOp, client: KaidawClient, song: SongState) -> SyncReport:
+    """What a push would do, without writing anything to the DAW or the song."""
+    return push(module, client, song, dry_run=True)
+
+
+def push(
+    module: ModuleOp,
+    client: KaidawClient,
+    song: SongState,
+    fresh: bool = False,
+    dry_run: bool = False,
+) -> SyncReport:
+    """
+    Make the DAW hold this compiled project, keeping edits made there.
+
+    Args:
+        module: A `daw` module. It is rewritten in place by the song's overrides.
+        client: The server
+        song: Where the lock and overrides live
+        fresh: Ignore the lock and build the project from nothing. Overrides still
+            apply, because they belong to the song and not to one project.
+        dry_run: Work out what would change and report it, changing nothing
+
+    Raises:
+        KaidawError: If the server refused. The transaction is atomic, so a refusal
+            leaves the project as it was.
+    """
+    lock = Lock() if fresh else song.load_lock()
+    overrides = song.load_overrides()
+    state = DawState(client.projection())
+    _check_lock(lock, state)
+
+    report = SyncReport()
+    report.captured = capture(lock, overrides, state)
+    apply_overrides(module, overrides, report)
+    project = _project(module)
+    if (
+        project.meters()
+        and len(project.meters()) > 1
+        or any(
+            m.numerator.value.data != 4 or m.denominator.value.data != 4 for m in project.meters()
+        )
+    ):
+        report.warnings.append(
+            "kaiDAW has no time signatures yet: notes land correctly but its bar lines are 4/4"
+        )
+
+    structure = _plan_structure(project, lock, state, report)
+    report.operations = len(structure)
+    if dry_run:
+        return report
+
+    aliases: dict[str, str] = {}
+    revision = state.revision
+    if structure:
+        result = client.apply(structure, revision, "pulang push")
+        aliases = result.get("aliases", {})
+        revision = result["revision"]
+        state = DawState(client.projection())
+    _record(project, lock, state, aliases)
+
+    parameters = _plan_parameters(project, lock, state, report)
+    report.operations += len(parameters)
+    if parameters:
+        result = client.apply(parameters, revision, "pulang push: parameters and automation")
+        revision = result["revision"]
+    _record_parameters(project, lock)
+
+    report.revision = revision
+    song.save_lock(lock)
+    song.save_overrides(overrides)
+    return report

@@ -31,7 +31,14 @@ def test_eighths_triplets_and_rests():
     with piece() as p:
         s = p.section("a", bars=1)
         s.track("m", role=Role.MELODY).notes(
-            [(C4, 1 / 8), (D4, 1 / 8), rest(1 / 4), note(E4, 1 / 12), note(G4, 1 / 12), (C4, 1 / 12)]
+            [
+                (C4, 1 / 8),
+                (D4, 1 / 8),
+                rest(1 / 4),
+                note(E4, 1 / 12),
+                note(G4, 1 / 12),
+                (C4, 1 / 12),
+            ]
         )
     ir = p.to_ir()
     offsets = [n.offset for n in ir.sections[0].tracks[0].content.notes]
