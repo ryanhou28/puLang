@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from fractions import Fraction
 from io import StringIO
 
 from xdsl.context import Context
@@ -12,6 +13,7 @@ from xdsl.parser import Parser
 from xdsl.passes import ModulePass
 from xdsl.printer import Printer
 
+from pypulang.compiler.dialects import event
 from pypulang.compiler.dialects.daw import DawDialect
 from pypulang.compiler.dialects.event import EventDialect
 from pypulang.compiler.dialects.intent import IntentDialect
@@ -121,3 +123,51 @@ def compile_piece(
         if stage == until:
             break
     return result
+
+
+def playback_events(
+    piece: Piece, from_bar: int | None = None, section: str | None = None
+) -> tuple[list[tuple[int, float, float, int, str, str]], float]:
+    """
+    A compiled piece as flat events, in the shape the playback backends take.
+
+    Args:
+        piece: The piece
+        from_bar: Start here, counting bars from 1
+        section: Play only this section
+
+    Returns:
+        (pitch, start, duration, velocity, track, role) tuples, and the tempo
+    """
+    if section is not None:
+        if section not in [s.name for s in piece.sections]:
+            raise ValueError(f"Unknown section: {section}")
+        piece = replace(piece, form=[section])
+
+    module = compile_piece(piece, until="event").stages["event"]
+    stream = next(o for o in module.body.block.ops if isinstance(o, event.StreamOp))
+
+    skip = Fraction(0)
+    if from_bar is not None and from_bar > 1:
+        bars_left = from_bar - 1
+        for marker in stream.sections():
+            beats_per_bar = marker.meter.data.beats_per_bar
+            bars = int(marker.length.data / beats_per_bar)
+            taken = min(bars, bars_left)
+            skip += taken * beats_per_bar
+            bars_left -= taken
+
+    events = [
+        (
+            n.pitch.value.data,
+            float(n.start.data - skip),
+            float(n.dur.data),
+            n.vel.value.data,
+            t.track.data,
+            t.role.data,
+        )
+        for t in stream.tracks()
+        for n in t.notes()
+        if n.start.data >= skip
+    ]
+    return events, stream.tempos()[0].bpm.value.data

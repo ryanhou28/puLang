@@ -36,7 +36,6 @@ from pypulang.ir.intent import (
     TrackContent,
 )
 from pypulang.lines import parse_line
-from pypulang.midi import realize_to_events, realize_to_midi, save_midi
 from pypulang.reharm import reharmonize as reharmonize_changes
 from pypulang.reharm import transposed_key
 
@@ -992,8 +991,11 @@ class PieceBuilder:
         Returns:
             mido.MidiFile object that can be played or further processed.
         """
-        ir = self.to_ir()
-        return realize_to_midi(ir, ticks_per_beat=ticks_per_beat)
+        from pypulang.backends.midi import event_to_midi
+        from pypulang.compiler import compile_piece
+
+        module = compile_piece(self.to_ir(), until="event").stages["event"]
+        return event_to_midi(module, ticks_per_beat=ticks_per_beat)
 
     def save_midi(self, path: str, ticks_per_beat: int = 480) -> None:
         """
@@ -1003,8 +1005,7 @@ class PieceBuilder:
             path: Output file path (e.g., "output.mid")
             ticks_per_beat: MIDI ticks per beat (default 480)
         """
-        ir = self.to_ir()
-        save_midi(ir, path, ticks_per_beat=ticks_per_beat)
+        self.to_midi(ticks_per_beat=ticks_per_beat).save(path)
 
     def save_audio(
         self,
@@ -1041,8 +1042,9 @@ class PieceBuilder:
         from pypulang.playback.builtin_synth import BuiltinSynth
 
         synth = BuiltinSynth(sample_rate=sample_rate)
-        ir = self.to_ir()
-        events, tempo = realize_to_events(ir)
+        from pypulang.compiler.pipeline import playback_events
+
+        events, tempo = playback_events(self.to_ir())
         audio = synth.render_to_audio(events, tempo, instruments)
 
         # soundfile expects shape (samples,) for mono or (samples, channels) for stereo
@@ -1110,7 +1112,9 @@ class PieceBuilder:
 
         # Realize piece to events
         ir = self.to_ir()
-        events, tempo = realize_to_events(ir, from_bar=from_bar, section=section)
+        from pypulang.compiler.pipeline import playback_events
+
+        events, tempo = playback_events(ir, from_bar=from_bar, section=section)
 
         # Start playback
         handle = backend.play(events, tempo, instruments)
@@ -1156,7 +1160,9 @@ class PieceBuilder:
 
         # Realize piece to events
         ir = self.to_ir()
-        events, tempo = realize_to_events(ir, section=section)
+        from pypulang.compiler.pipeline import playback_events
+
+        events, tempo = playback_events(ir, section=section)
 
         # Handle bars limit - filter events to only those within bar range
         if bars is not None:

@@ -1,10 +1,9 @@
 """
-MIDI emission for puLang.
+The original realizer: Intent IR straight to MIDI, in one step.
 
-This module converts Intent IR directly to MIDI files. In Phase 1, we skip
-the Event IR layer and realize directly to MIDI for simplicity.
-
-The main entry point is `realize_to_midi(piece: Piece) -> mido.MidiFile`.
+The compiler in `pypulang.compiler` replaced this. It stays as the reference the
+golden tests hold the compiler to, and it does not understand context patterns
+such as `grid`. New code should compile; see `pypulang.backends.midi`.
 """
 
 from __future__ import annotations
