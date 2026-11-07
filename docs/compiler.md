@@ -52,7 +52,8 @@ pulang save song.py 'C:\songs\x.kaidaw'
 pulang watch song.py                 # push on every save
 ```
 
-Add `--port` if kaiDAW is not on 8899. From WSL, puLang reaches a Windows server through
+Install with `pip install -e .`, and start kaiDAW with `tools/build-windows.sh serve` from its
+repo. Add `--port` if it is not on 8899. From WSL, puLang reaches a Windows server through
 `curl.exe` automatically.
 
 A song is a Python file:
@@ -198,6 +199,9 @@ Two things about Surge are worth knowing if you write patches:
 - Setting an oscillator, filter or FX **type** resets the parameters that belong to it, on the
   next audio block. Push handles this: it writes types first, runs a moment of audio, then
   writes the rest. A parameter named `... Type` is treated this way.
+- Surge renames some parameters to suit the active oscillator, on the first instance in a
+  process only ("Sub Mix" becomes "M2 Ratio"). Patches use the generic names, and push learns
+  them from a new instance, where they are always generic.
 - Surge's `Polyphony Limit` defaults to 16 voices, which a wide chord through unison saws
   exceeds. The chord patches raise it.
 

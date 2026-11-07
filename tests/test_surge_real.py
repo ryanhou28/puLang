@@ -63,22 +63,24 @@ def play(client, tmp_path, patch, pitch):
         for x in client.projection("detail")["plugins"]
         if x["id"] == lock.devices[f"{name}/synth"]["id"]
     )
-    return load(str(target)), plugin
+    return load(str(target)), plugin, lock.schemas[SURGE_XT]
 
 
 def test_oscillator_parameters_survive_a_type_change(client, tmp_path):
-    (samples, rate), plugin = play(client, tmp_path, surge("synth", electric_piano()), 60)
-    names = dict(zip(plugin["parameterNames"], plugin["parameters"], strict=True))
+    (samples, rate), plugin, ids = play(client, tmp_path, surge("synth", electric_piano()), 60)
     display = plugin["parameterDisplay"]
+    # Parameter ids are the stable handle. Surge renames a parameter to suit the active
+    # oscillator on its first instance in a process ("Sub Mix" becomes "M2 Ratio").
+    #
     # Display strings only read like this once FM2 is really the active oscillator,
     # and they would be its defaults if the write had been wiped.
-    assert display[names["A Osc 1 Sub Mix"]] == "C : 14"
-    assert display[names["A Osc 1 Shape"]] == "20.00 %"
+    assert display[ids["A Osc 1 Sub Mix"]] == "C : 14"
+    assert display[ids["A Osc 1 Shape"]] == "20.00 %"
     assert measure(samples, rate).rms_db > -60
 
 
 def test_the_kick_sweeps_down_to_its_resting_pitch(client, tmp_path):
-    (samples, rate), _ = play(client, tmp_path, surge("synth", kick()), 31)
+    (samples, rate), _, _ = play(client, tmp_path, surge("synth", kick()), 31)
     track = pitch_track(samples[: int(0.2 * rate)], rate, 6)
     assert max(track[:4]) > 150
     assert 40 < dominant_frequency(samples[int(0.05 * rate) : int(0.15 * rate)], rate) < 70

@@ -303,6 +303,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except KeyboardInterrupt:
         return 0
+    except BrokenPipeError:
+        # `pulang ir song.py | head` closes the pipe early, which is not an error.
+        sys.stderr.close()
+        return 0
 
 
 if __name__ == "__main__":
