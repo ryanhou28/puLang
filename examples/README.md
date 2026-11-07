@@ -13,6 +13,17 @@ pip install -e .
 python examples/minimal.py
 ```
 
+## Songs
+
+Two complete songs, compiled to real kaiDAW projects through Surge XT:
+
+- **[songs/slow_orbit.py](songs/slow_orbit.py)**: jazz fusion in D dorian, 116 bpm, with a section in 7/8 and a swung solo over walking bass.
+- **[songs/afterglow.py](songs/afterglow.py)**: future bass in Ab, 150 bpm, with half-time drums, builds, and pumping saw chords.
+
+```bash
+pulang render examples/songs/slow_orbit.py -o slow_orbit.wav
+```
+
 ## Examples
 
 ### [minimal.py](minimal.py)

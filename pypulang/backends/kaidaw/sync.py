@@ -28,7 +28,6 @@ from pypulang.compiler.dialects import daw
 from pypulang.compiler.dialects.mus import from_attr
 from pypulang.compiler.locs import loc_key, name_loc
 
-
 # kaiDAW's master bus is addressed by this name, and holds a plugin chain but no fader.
 MASTER = "master"
 

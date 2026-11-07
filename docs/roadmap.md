@@ -1,5 +1,8 @@
 # puLang Roadmap
 
+> **Status, 2026-11-07.** The compiler now exists; see [compiler.md](compiler.md), which is the
+> reference for what is built. Phases 3, 4 and 5 are done in substance through a different route than planned here (see compiler.md for what shipped), and the dialect framework of phase 9 came from xDSL. Lifting (6), MusicXML (7) and the `.pu` parser are not built. The checklists below were not updated item by item.
+
 ## Philosophy
 
 **Build the minimum that proves the concept, then expand based on real usage.**

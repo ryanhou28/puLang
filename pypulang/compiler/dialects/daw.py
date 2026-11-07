@@ -304,7 +304,7 @@ class AutomationOp(IRDLOperation):
 
     def point_list(self) -> list[tuple[int, float]]:
         values = [_point_value(a) for a in self.points.data]
-        return [(int(t), float(v)) for t, v in zip(values[0::2], values[1::2])]
+        return [(int(t), float(v)) for t, v in zip(values[0::2], values[1::2], strict=True)]
 
 
 def _point_attr(value: object) -> Attribute:

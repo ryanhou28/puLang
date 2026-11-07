@@ -165,7 +165,9 @@ class HarmonyOp(IRDLOperation):
         )
 
     def changes(self) -> list[tuple[Chord, Fraction]]:
-        return [(c.data, d.data) for c, d in zip(self.chords.data, self.durations.data)]
+        return [
+            (c.data, d.data) for c, d in zip(self.chords.data, self.durations.data, strict=True)
+        ]
 
 
 @irdl_op_definition

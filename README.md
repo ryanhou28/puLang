@@ -1,5 +1,34 @@
 # puLang
 
+puLang compiles music. You write a song as intent: harmony, form, patterns. A pipeline of
+dialects lowers it to the tracks, clips and notes of a real DAW project, with your plugins.
+You can then edit it in the DAW and keep composing in source, because recompiling keeps your
+edits.
+
+```python
+from pypulang import *
+
+with piece(tempo=132, key="C major", title="Blue") as song:
+    a = song.section("a", bars=8)
+    a.chart("Dm9 G13 | Cmaj9 | Em7 A7alt | Dm9 G7alt")
+    a.track("bass", role=Role.BASS).pattern(walking_bass)
+    a.track("keys", role=Role.HARMONY).pattern(comp).voicing("rootless", 52, 72)
+```
+
+```sh
+pulang ir song.py --stage score     # read the IR at any stage
+pulang push song.py                 # make kaiDAW hold the song
+pulang render song.py -o song.wav   # bounce it
+```
+
+[docs/compiler.md](docs/compiler.md) explains how it works and how to use it.
+[examples/songs](examples/songs) has two complete songs: Slow Orbit, jazz fusion in D dorian
+with a section in 7/8, and Afterglow, future bass in Ab.
+
+The older design documents, [architecture](docs/architecture.md), [IR spec](docs/ir-spec.md)
+and [roadmap](docs/roadmap.md), describe more than exists. Each now says at the top what was
+built.
+
 ## Installation
 
 ```bash
@@ -72,4 +101,6 @@ p.play(backend=VirtualMidi("pypulang"))
 
 ## Documentation
 
+- [The compiler](docs/compiler.md) - How it works and how to use it
+- [kaiDAW findings](docs/kaidaw-findings.md) - What the songs need from kaiDAW
 - [Style Guide](docs/style-guide.md) - Code style and formatting

@@ -172,7 +172,7 @@ class CurveOp(IRDLOperation):
 
     def point_list(self) -> list[tuple[Fraction, Fraction]]:
         values = [a.data for a in self.points.data]
-        return list(zip(values[0::2], values[1::2]))
+        return list(zip(values[0::2], values[1::2], strict=True))
 
 
 EventDialect = Dialect("event", [StreamOp, TempoOp, SectionOp, TrackOp, NoteOp, CurveOp], [])

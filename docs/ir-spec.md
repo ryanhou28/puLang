@@ -1,5 +1,8 @@
 # puLang IR Specification
 
+> **Status, 2026-11-07.** The compiler now exists; see [compiler.md](compiler.md), which is the
+> reference for what is built. The Intent, Score and Event sections describe the JSON sketch this design started from; the real IR is xDSL dialects in `pypulang/compiler/dialects`. Of the decisions listed at the end: dialects are defined with xDSL (1), pipelines are explicit (2), Score IR is moderate with no notated ties (4), and lowering always goes through Score IR (5). Lifting ambiguity (3) is open, because lifting is not built. Pattern `rate` is in beats in the IR; the DSL converts from note values.
+
 *Draft — Three-tier IR with Dialect Framework*
 
 ---

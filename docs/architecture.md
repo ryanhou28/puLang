@@ -1,5 +1,8 @@
 # puLang Architecture
 
+> **Status, 2026-11-07.** The compiler now exists; see [compiler.md](compiler.md), which is the
+> reference for what is built. This document remains the design rationale. Three things differ from it: a `daw` dialect sits below Event IR as the compiler's target, the dialects are built on xDSL instead of a framework of our own, and `Section.transform` takes `reharmonize`, `transpose` and `register`.
+
 ## Overview
 
 puLang uses a **compiler-style architecture** with clear separation between:

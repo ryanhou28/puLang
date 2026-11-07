@@ -2,6 +2,8 @@
 
 *Draft v0.1 — Subject to change*
 
+> **Status, 2026-11-07.** See [compiler.md](compiler.md) for what is built and how to use it. `chart`, `line`, `grid`, `hits`, `riff`, `rack` and `automate` are new and are documented there.
+
 This document specifies **pyPuLang**, the Python-embedded syntax for puLang. A standalone puLang syntax is co-designed but documented separately.
 
 ---
