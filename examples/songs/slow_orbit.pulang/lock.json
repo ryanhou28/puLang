@@ -402,11 +402,11 @@
    }
   },
   "master/glue": {
-   "id": "plugin-3674",
+   "id": "plugin-3649",
    "identifier": "compressor",
    "params": {
     "Attack": 0.1,
-    "Output gain": 0.1,
+    "Output gain": 0.18,
     "Ratio": 0.4,
     "Release": 0.3,
     "Threshold": 0.3
@@ -509,7 +509,7 @@
    }
   },
   "verb/reverb": {
-   "id": "plugin-3650",
+   "id": "plugin-3651",
    "identifier": "reverb",
    "params": {
     "Dry Level": 0.0,
@@ -33213,7 +33213,7 @@
    "clip": "solo#1/lead",
    "id": "note-2664",
    "note": [
-    81,
+    83,
     970,
     518,
     95
@@ -33223,7 +33223,7 @@
    "clip": "solo#1/lead",
    "id": "note-2666",
    "note": [
-    84,
+    86,
     1930,
     518,
     97
@@ -33233,7 +33233,7 @@
    "clip": "solo#1/lead",
    "id": "note-2665",
    "note": [
-    83,
+    84,
     1536,
     346,
     88
@@ -33243,7 +33243,7 @@
    "clip": "solo#1/lead",
    "id": "note-2668",
    "note": [
-    88,
+    89,
     2871,
     518,
     98
@@ -33253,7 +33253,7 @@
    "clip": "solo#1/lead",
    "id": "note-2667",
    "note": [
-    86,
+    88,
     2495,
     346,
     91
@@ -33313,7 +33313,7 @@
    "clip": "solo#1/lead",
    "id": "note-2715",
    "note": [
-    82,
+    81,
     36091,
     346,
     81
@@ -33383,7 +33383,7 @@
    "clip": "solo#1/lead",
    "id": "note-2723",
    "note": [
-    86,
+    88,
     44737,
     960,
     88
@@ -33403,7 +33403,7 @@
    "clip": "solo#1/lead",
    "id": "note-2725",
    "note": [
-    70,
+    69,
     50497,
     346,
     88
@@ -33563,7 +33563,7 @@
    "clip": "solo#1/lead",
    "id": "note-2674",
    "note": [
-    76,
+    74,
     5767,
     518,
     90
@@ -33573,7 +33573,7 @@
    "clip": "solo#1/lead",
    "id": "note-2673",
    "note": [
-    77,
+    76,
     5386,
     346,
     93
@@ -33583,7 +33583,7 @@
    "clip": "solo#1/lead",
    "id": "note-2675",
    "note": [
-    74,
+    71,
     6330,
     960,
     80
@@ -33663,7 +33663,7 @@
    "clip": "solo#1/lead",
    "id": "note-2683",
    "note": [
-    77,
+    76,
     11129,
     346,
     93
@@ -33683,7 +33683,7 @@
    "clip": "solo#1/lead",
    "id": "note-2685",
    "note": [
-    65,
+    67,
     12090,
     346,
     87
@@ -33713,7 +33713,7 @@
    "clip": "solo#1/lead",
    "id": "note-2687",
    "note": [
-    65,
+    67,
     13058,
     346,
     91
@@ -33803,7 +33803,7 @@
    "clip": "solo#1/lead",
    "id": "note-2697",
    "note": [
-    69,
+    65,
     23607,
     346,
     95
@@ -33813,7 +33813,7 @@
    "clip": "solo#1/lead",
    "id": "note-2698",
    "note": [
-    65,
+    69,
     24005,
     518,
     94
@@ -33833,7 +33833,7 @@
    "clip": "solo#1/lead",
    "id": "note-2699",
    "note": [
-    69,
+    71,
     24579,
     346,
     94
@@ -33863,7 +33863,7 @@
    "clip": "solo#1/lead",
    "id": "note-2703",
    "note": [
-    76,
+    77,
     26498,
     346,
     93
@@ -37189,7 +37189,7 @@
   },
   "verb": {
    "color": null,
-   "id": "track-3649",
+   "id": "track-3650",
    "pan": null,
    "volume": 0.7
   }

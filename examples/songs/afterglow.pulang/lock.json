@@ -4077,7 +4077,7 @@
     "A Osc 1 Unison Detune": 0.12,
     "A Osc 1 Unison Voices": 0.1328125,
     "A Pre-Filter Gain": 0.5,
-    "A VCA Gain": 0.3854166666666667,
+    "A VCA Gain": 0.46875,
     "A Volume": 1.0,
     "Global Volume": 1.0,
     "Polyphony Limit": 0.9
@@ -4101,7 +4101,7 @@
     "A Osc 1 Shape": 0.5,
     "A Osc 1 Type": 0.0234375,
     "A Pre-Filter Gain": 0.5,
-    "A VCA Gain": 0.375,
+    "A VCA Gain": 0.46875,
     "A Volume": 1.0,
     "Global Volume": 1.0
    }

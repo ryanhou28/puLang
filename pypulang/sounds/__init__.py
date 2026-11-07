@@ -71,7 +71,7 @@ def _master(song: PieceBuilder, threshold: float, output: float) -> None:
 
 def fusion_rack(song: PieceBuilder) -> None:
     """The fusion band: Rhodes, bass, synth lead, pad, and a kit."""
-    _master(song, threshold=0.3, output=0.1)
+    _master(song, threshold=0.3, output=0.18)
     _reverb_bus(song, room=0.45, wet=0.5)
     song.rack(
         "rhodes", surge("synth", electric_piano()), volume=0.62, pan=-0.12, sends={"verb": 0.2}

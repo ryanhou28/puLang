@@ -144,6 +144,18 @@ def _literal_records(
     return records
 
 
+def _chord_timeline(occurrences: list[_Occurrence]) -> list[score.ChordOp]:
+    timeline = []
+    for occurrence in occurrences:
+        harmony = occurrence.op.harmony()
+        if harmony is None:
+            continue
+        marker = occurrence.marker
+        for chord, at, beats in _chord_spans(harmony, marker.length, marker.meter.data):
+            timeline.append(score.ChordOp(chord, marker.key.data, marker.start.data + at, beats))
+    return timeline
+
+
 @dataclass(frozen=True)
 class LowerIntentToScore(ModulePass):
     name = "lower-intent-to-score"
@@ -204,7 +216,12 @@ class LowerIntentToScore(ModulePass):
             piece.tempo.value.data,
             piece.key.data,
             piece.meter.data,
-            [*racks, *[o.marker for o in occurrences], *parts.values()],
+            [
+                *racks,
+                *[o.marker for o in occurrences],
+                *_chord_timeline(occurrences),
+                *parts.values(),
+            ],
         )
         result.location = piece.location
         op.body.block.detach_op(piece)

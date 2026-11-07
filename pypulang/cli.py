@@ -2,11 +2,13 @@
 The `pulang` command.
 
     pulang ir song.py --stage score       Print the IR at a stage
+    pulang check song.py                  Read through the music for likely mistakes
     pulang trace song.py -o build/        Write the IR after every pass
     pulang midi song.py -o song.mid       Write a MIDI file
     pulang push song.py                   Make kaiDAW hold the song
     pulang status song.py                 Say what a push would do
     pulang pull song.py                   Keep edits made in the DAW
+    pulang save song.py <path>            Save the project the server has open
     pulang edits song.py                  List those edits
     pulang drop song.py <location>        Forget one of them
     pulang render song.py -o song.wav     Bounce it
@@ -29,6 +31,7 @@ from pypulang.backends.kaidaw.client import DEFAULT_PORT, WslTransport
 from pypulang.backends.kaidaw.sync import MASTER
 from pypulang.backends.midi import event_to_midi
 from pypulang.compiler import print_ir
+from pypulang.compiler.check import review
 from pypulang.compiler.dialects import event as event_dialect
 from pypulang.compiler.pipeline import STAGES
 from pypulang.songfile import Song, load_song
@@ -50,6 +53,12 @@ def _report(song: Song, result_warnings: list[str]) -> None:
 def cmd_ir(args: argparse.Namespace) -> int:
     result = load_song(args.song).compile(until=args.stage)
     print(print_ir(result.stages[args.stage], locations=args.locations), end="")
+    return 0
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    module = load_song(args.song).compile(until="score").stages["score"]
+    print(review(module).summary())
     return 0
 
 
@@ -93,6 +102,21 @@ def cmd_status(args: argparse.Namespace) -> int:
 def cmd_pull(args: argparse.Namespace) -> int:
     report = pull(_client(args), _state(args))
     print(f"Captured {report.captured} edit(s)")
+    return 0
+
+
+def cmd_save(args: argparse.Namespace) -> int:
+    """Save the open project, so it can be reopened in kaiDAW and pushed to again."""
+    client = _client(args)
+    transport = client.transport
+    if isinstance(transport, WslTransport) and args.path[1:3] == ":\\":
+        # The server creates the project's files but not its directory.
+        drive = args.path[0].lower()
+        Path(f"/mnt/{drive}/{args.path[3:].replace(chr(92), '/')}").mkdir(
+            parents=True, exist_ok=True
+        )
+    client.save(args.path)
+    print(f"Saved {args.path}")
     return 0
 
 
@@ -239,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     ir.add_argument("--stage", choices=STAGES, default="intent")
     ir.add_argument("--locations", action="store_true", help="Include source locations")
 
+    command("check", cmd_check, "Read through the music for likely mistakes")
+
     trace = command("trace", cmd_trace, "Write the IR after every pass")
     trace.add_argument("-o", "--output", default="build")
 
@@ -250,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
 
     with_port(command("status", cmd_status, "Say what a push would do"))
     with_port(command("pull", cmd_pull, "Keep edits made in the DAW"))
+    save = with_port(command("save", cmd_save, "Save the open project"))
+    save.add_argument("path", help="A project directory the server can write")
     command("edits", cmd_edits, "List edits made in the DAW")
     drop = command("drop", cmd_drop, "Forget one edit")
     drop.add_argument("location")

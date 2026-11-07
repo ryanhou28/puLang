@@ -72,6 +72,9 @@ class ScoreOp(IRDLOperation):
     def sections(self) -> list[SectionOp]:
         return [op for op in self.body.block.ops if isinstance(op, SectionOp)]
 
+    def chords(self) -> list[ChordOp]:
+        return [op for op in self.body.block.ops if isinstance(op, ChordOp)]
+
 
 @irdl_op_definition
 class SectionOp(IRDLOperation):
@@ -119,6 +122,33 @@ class SectionOp(IRDLOperation):
     @property
     def tag(self) -> str:
         return f"{self.section.data}#{self.occurrence.value.data}"
+
+
+@irdl_op_definition
+class ChordOp(IRDLOperation):
+    """
+    One chord in the piece's harmonic timeline.
+
+    Slots carry a chord until they become notes, and then that knowledge would be
+    gone. This keeps it, so analysis can ask what was sounding under any note.
+    """
+
+    name = "score.chord"
+    chord = prop_def(ChordAttr)
+    key = prop_def(KeyAttr)
+    at = prop_def(RationalAttr)
+    dur = prop_def(RationalAttr)
+    assembly_format = "$chord `key` $key `at` $at `for` $dur attr-dict"
+
+    def __init__(self, chord: Chord, key: Key, at: Fraction, dur: Fraction):
+        super().__init__(
+            properties={
+                "chord": ChordAttr(chord),
+                "key": KeyAttr(key),
+                "at": RationalAttr(at),
+                "dur": RationalAttr(dur),
+            }
+        )
 
 
 @irdl_op_definition
@@ -319,4 +349,4 @@ class NoteOp(IRDLOperation):
         return cls(pitch, voice, beat, dur, vel, dynamic, articulation)
 
 
-ScoreDialect = Dialect("score", [ScoreOp, SectionOp, PartOp, SlotOp, BarOp, NoteOp], [])
+ScoreDialect = Dialect("score", [ScoreOp, SectionOp, ChordOp, PartOp, SlotOp, BarOp, NoteOp], [])

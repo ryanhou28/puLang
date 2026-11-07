@@ -224,7 +224,14 @@ def solo_line(context: PatternContext) -> list[Event]:
         strong = offset % 1 == 0
         pool = chord_pcs if strong else tones
         pitch = _nearest(position, pool, direction)
-        pitch = max(low, min(high, pitch))
+        if pitch > high or pitch < low:
+            direction = -direction
+            pitch = _nearest(max(low, min(high, pitch)), pool, direction)
+        if events and pitch == events[-1].pitch:
+            # A line that sits on one note has stopped being a line.
+            pitch = _nearest(pitch, tones, direction)
+            if not low <= pitch <= high:
+                pitch = _nearest(events[-1].pitch, tones, -direction)
         last_in_phrase = into_phrase + step >= phrase_beats - 1
         length = Fraction(1) if last_in_phrase else step * Fraction(9, 10)
         velocity = (
