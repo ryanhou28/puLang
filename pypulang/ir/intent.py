@@ -145,6 +145,8 @@ class Chord:
         inversion: 0=root, 1=first, 2=second, 3=third (for 7ths)
         altered_root: 0=natural, -1=flat, +1=sharp (for bVII, #IV, etc.)
         secondary: Target for secondary dominants, e.g., "V" for V/V
+        bass_offset: Slash bass as semitones above the key root (0-11), or None.
+            Measured from the key, so transposing the key moves it with the chord.
     """
 
     numeral: str
@@ -153,6 +155,7 @@ class Chord:
     inversion: int = 0
     altered_root: int = 0
     secondary: str | None = None
+    bass_offset: int | None = None
 
     def __post_init__(self) -> None:
         valid_numerals = {
@@ -212,6 +215,7 @@ class Chord:
             "inversion": self.inversion,
             "altered_root": self.altered_root,
             "secondary": self.secondary,
+            "bass_offset": self.bass_offset,
         }
 
     @classmethod
@@ -223,6 +227,7 @@ class Chord:
             inversion=d.get("inversion", 0),
             altered_root=d.get("altered_root", 0),
             secondary=d.get("secondary"),
+            bass_offset=d.get("bass_offset"),
         )
 
 
@@ -397,6 +402,7 @@ class Track:
         octave_shift: Relative octave adjustment
         velocity: Base velocity (0-127)
         muted: Whether track is muted
+        voicing: Name of a voicing strategy, or None for close position
     """
 
     name: str
@@ -406,6 +412,7 @@ class Track:
     octave_shift: int = 0
     velocity: int = 100
     muted: bool = False
+    voicing: str | None = None
 
     def __post_init__(self) -> None:
         valid_roles = {"melody", "bass", "harmony", "rhythm"}
@@ -423,6 +430,7 @@ class Track:
             "octave_shift": self.octave_shift,
             "velocity": self.velocity,
             "muted": self.muted,
+            "voicing": self.voicing,
         }
 
     @classmethod
@@ -442,6 +450,7 @@ class Track:
             octave_shift=d.get("octave_shift", 0),
             velocity=d.get("velocity", 100),
             muted=d.get("muted", False),
+            voicing=d.get("voicing"),
         )
 
 

@@ -7,6 +7,7 @@ concrete MIDI pitches. It's a key part of the Intent IR → Event IR pipeline.
 
 from __future__ import annotations
 
+from pypulang.harmony import chord_intervals
 from pypulang.ir.intent import Chord, Key
 from pypulang.scales import get_scale_pitches, pitch_class_to_semitone
 
@@ -68,6 +69,12 @@ def resolve_chord(chord: Chord, key: Key, octave: int = 4) -> list[int]:
     # Apply inversion
     pitches = _apply_inversion(pitches, chord.inversion)
 
+    # A slash bass goes under everything, in the octave just below the chord.
+    if chord.bass_offset is not None:
+        bass_pc = (key_root + chord.bass_offset) % 12
+        bass = pitches[0] - ((pitches[0] - bass_pc) % 12 or 12)
+        pitches = [bass] + pitches
+
     return pitches
 
 
@@ -104,68 +111,12 @@ def _build_chord_pitches(root: int, quality: str, extensions: tuple[str, ...]) -
         extensions: Tuple of extension strings like "7", "maj7", "9", etc.
 
     Returns:
-        List of MIDI pitches (unsorted, root position)
+        List of MIDI pitches, sorted low to high
+
+    Raises:
+        ValueError: If an extension is not a known chord token
     """
-    pitches = [root]
-
-    # Interval from root in semitones for the third
-    if quality == "major":
-        third = 4  # Major third
-        fifth = 7  # Perfect fifth
-    elif quality == "minor":
-        third = 3  # Minor third
-        fifth = 7  # Perfect fifth
-    elif quality == "diminished":
-        third = 3  # Minor third
-        fifth = 6  # Diminished fifth
-    elif quality == "augmented":
-        third = 4  # Major third
-        fifth = 8  # Augmented fifth
-    else:
-        raise ValueError(f"Unknown chord quality: {quality}")
-
-    pitches.append(root + third)
-    pitches.append(root + fifth)
-
-    # Handle extensions
-    for ext in extensions:
-        if ext == "7":
-            # Dominant 7th (minor 7th interval)
-            pitches.append(root + 10)
-        elif ext == "maj7":
-            # Major 7th
-            pitches.append(root + 11)
-        elif ext == "6":
-            # Added 6th
-            pitches.append(root + 9)
-        elif ext == "9":
-            # 9th (implies 7th for dominant)
-            if "7" not in extensions and "maj7" not in extensions:
-                pitches.append(root + 10)  # Add dominant 7th
-            pitches.append(root + 14)  # 9th
-        elif ext == "add9":
-            # Add 9th without 7th
-            pitches.append(root + 14)
-        elif ext == "11":
-            # 11th (implies 7th and 9th)
-            if "7" not in extensions and "maj7" not in extensions:
-                pitches.append(root + 10)
-            if "9" not in extensions:
-                pitches.append(root + 14)
-            pitches.append(root + 17)  # 11th
-        elif ext == "add11":
-            # Add 11th without 7th/9th
-            pitches.append(root + 17)
-        elif ext == "sus2":
-            # Replace third with 2nd
-            pitches = [p for p in pitches if p != root + third]
-            pitches.append(root + 2)
-        elif ext == "sus4":
-            # Replace third with 4th
-            pitches = [p for p in pitches if p != root + third]
-            pitches.append(root + 5)
-
-    return sorted(pitches)
+    return [root + tone.interval for tone in chord_intervals(quality, extensions)]
 
 
 def _apply_inversion(pitches: list[int], inversion: int) -> list[int]:
