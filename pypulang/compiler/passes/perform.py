@@ -203,3 +203,81 @@ class Pump(ModulePass):
         if points:
             curve = event.CurveOp("mix.volume", points)
             tracks[self.target].body.block.add_op(curve)
+
+
+@dataclass(frozen=True)
+class Bend(ModulePass):
+    """
+    Pitch bends on a track's notes: a scoop up into a note, or a fall off its end.
+
+    The bend is written to the track's pitch-bend lane, which every instrument
+    hears and a person can redraw in the DAW. It suits a single line; on chords it
+    bends every note at once, as a keyboard's wheel does.
+
+    Args:
+        track: Track to bend
+        kind: "scoop" rises into the note from below; "fall" drops off its end
+        semitones: How far the bend reaches
+        time: How long it takes, in beats (default "1/8")
+        min_length: Only notes at least this long, in beats (default "1/2")
+        every: Every Nth such note, counting through the piece (default 1)
+        bend_range: The instrument's bend range in semitones (Surge XT's default, 2)
+        sections: Only notes in these sections (default all)
+    """
+
+    name = "bend"
+    track: str = ""
+    kind: str = "scoop"
+    semitones: float = 1.0
+    time: str = "1/8"
+    min_length: str = "1/2"
+    every: int = 1
+    bend_range: float = 2.0
+    sections: tuple[str, ...] = ()
+
+    # Controllers hold until the next event, so a curve is drawn as steps.
+    STEPS = 8
+
+    def apply(self, ctx: Context, op: ModuleOp) -> None:
+        if self.kind not in ("scoop", "fall"):
+            raise ValueError(f"bend kind must be 'scoop' or 'fall', not {self.kind!r}")
+        track = next((t for t in _stream(op).tracks() if t.track.data == self.track), None)
+        if track is None:
+            raise ValueError(f"bend: no track {self.track!r}")
+        time = Fraction(self.time)
+        shortest = Fraction(self.min_length)
+        depth = (
+            Fraction(max(-1.0, min(1.0, self.semitones / self.bend_range))).limit_denominator(1000)
+            / 2
+        )
+        notes = sorted(
+            (n for n in _selected(op, (self.track,), self.sections) if n.dur.data >= shortest),
+            key=lambda n: n.start.data,
+        )
+        points: list[tuple[Fraction, Fraction]] = []
+        tick = Fraction(1, PPQ)
+        for index, note in enumerate(notes):
+            if index % max(1, self.every):
+                continue
+            start, end = note.start.data, note.start.data + note.dur.data
+            if self.kind == "scoop":
+                # Down a tick early, so the note starts bent rather than jumping
+                # after its attack: a controller and a note on the same tick may
+                # reach the instrument in either order.
+                span = min(time, end - start)
+                points.append((max(start - tick, Fraction(0)), Fraction(1, 2) - depth))
+                for k in range(1, self.STEPS + 1):
+                    eased = 1 - (1 - Fraction(k, self.STEPS)) ** 2
+                    points.append(
+                        (start + span * k / self.STEPS, Fraction(1, 2) - depth * (1 - eased))
+                    )
+            else:
+                span = min(time, end - start)
+                begin = end - span
+                for k in range(self.STEPS + 1):
+                    eased = Fraction(k, self.STEPS) ** 2
+                    points.append((begin + span * k / self.STEPS, Fraction(1, 2) - depth * eased))
+                points.append((end + tick, Fraction(1, 2)))
+        if points:
+            points.sort(key=lambda p: p[0])
+            track.body.block.add_op(event.CurveOp("midi.pitchbend", points))

@@ -472,11 +472,14 @@ class Device:
         name: Local name, which automation targets refer to
         identifier: The plugin's identifier in the DAW
         params: Published parameter name to normalised value (0..1)
+        patch: A preset to start from, by the plugin's own name for it; `params`
+            are written on top
     """
 
     name: str
     identifier: str
     params: dict[str, float] = field(default_factory=dict)
+    patch: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "identifier": self.identifier, "params": self.params}

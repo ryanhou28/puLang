@@ -179,6 +179,18 @@ class KaidawClient:
             )
         return result
 
+    def plugin_state(self, plugin_id: str) -> str:
+        """
+        A plugin's whole state, base64, as kaiDAW's `GET /plugin/state` returns it.
+
+        Raises:
+            KaidawError: If there is no such plugin, or it is not loaded
+        """
+        result = self.transport.request("GET", f"/plugin/state?pluginId={plugin_id}")
+        if not result.get("ok"):
+            raise KaidawError(f"no state for {plugin_id}: {result.get('errors')}")
+        return result["state"]
+
     def plugins(self) -> list[dict[str, Any]]:
         return self.transport.request("GET", "/plugins")["plugins"]
 

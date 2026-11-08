@@ -157,6 +157,10 @@ class CurveOp(IRDLOperation):
 
     `target` is "<device>.<parameter>", resolved against the track's rack when
     the piece reaches a DAW. `points` alternates time and value (0..1).
+
+    The device `midi` is not a plugin: "midi.pitchbend", "midi.pressure" and
+    "midi.cc1" to "midi.cc127" are controller lanes, which travel inside the clips
+    with the notes instead of as automation.
     """
 
     name = "event.curve"

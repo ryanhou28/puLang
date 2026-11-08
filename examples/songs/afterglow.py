@@ -7,7 +7,7 @@ Compile and listen:
 """
 
 from pypulang import *
-from pypulang.compiler.passes.perform import Humanize, Pump
+from pypulang.compiler.passes.perform import Bend, Humanize, Pump
 from pypulang.sounds import cutoff, future_bass_rack
 
 
@@ -149,5 +149,7 @@ pipeline = {
             sections=("drop", "drop2"),
         ),
         Humanize(timing=4, velocity=4, seed="afterglow", tracks=("hat", "pluck")),
+        # Scoops into the lead's long notes, a whole tone, the future bass way.
+        Bend(track="lead", kind="scoop", semitones=2, time="1/8", min_length="1/2", every=2),
     ]
 }

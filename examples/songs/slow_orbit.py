@@ -7,7 +7,7 @@ Compile and listen:
 """
 
 from pypulang import *
-from pypulang.compiler.passes.perform import Accent, Humanize, Swing
+from pypulang.compiler.passes.perform import Accent, Bend, Humanize, Swing
 from pypulang.pitches import C3, C5, E3, F4, G3
 from pypulang.sounds import fusion_drums, fusion_rack
 
@@ -142,6 +142,8 @@ pipeline = {
         Swing(ratio="3/5", sections=("solo",), tracks=("lead", "rhodes", "ride", "hat", "snare")),
         Accent(on=4, off=-3, tracks=("hat",), sections=("a",)),
         Humanize(timing=10, velocity=5, seed="slow orbit", tracks=("rhodes", "bass", "lead")),
+        # A scoop into every other long lead note, a semitone up from below.
+        Bend(track="lead", kind="scoop", semitones=1, time="1/8", min_length="1/2", every=2),
         Humanize(
             timing=6, velocity=7, seed="slow orbit drums", tracks=("kick", "snare", "hat", "ride")
         ),

@@ -54,9 +54,7 @@ def _reverb_bus(song: PieceBuilder, room: float, wet: float) -> None:
 
 def _master(song: PieceBuilder, threshold: float, output: float) -> None:
     """
-    Gentle compression on the master bus.
-
-    kaiDAW's master has no fader, so this is also where the headroom comes from.
+    Gentle compression on the master bus, which is also where the headroom comes from.
 
     Args:
         threshold: Normalised (0.2 is -13.6 dB, 0.4 is -7.8 dB)
@@ -73,10 +71,18 @@ def fusion_rack(song: PieceBuilder) -> None:
     """The fusion band: Rhodes, bass, synth lead, pad, and a kit."""
     _master(song, threshold=0.3, output=0.18)
     _reverb_bus(song, room=0.45, wet=0.5)
+    # Surge's own factory patches, loaded whole. The parameter-built versions
+    # (`electric_piano()`, `warm_pad()`) are still here for comparison.
     song.rack(
-        "rhodes", surge("synth", electric_piano()), volume=0.62, pan=-0.12, sends={"verb": 0.2}
+        "rhodes",
+        surge("synth", patch="Keys/Soft Suitcase"),
+        volume=0.62,
+        pan=-0.12,
+        sends={"verb": 0.2},
     )
-    song.rack("pad", surge("synth", warm_pad()), volume=0.5, pan=0.1, sends={"verb": 0.35})
+    song.rack(
+        "pad", surge("synth", patch="Pads/MKS-70 Warm Pad"), volume=0.5, pan=0.1, sends={"verb": 0.35}
+    )
     song.rack("bass", surge("synth", electric_bass()), volume=0.68)
     song.rack("lead", surge("synth", mono_lead()), volume=0.62, pan=0.05, sends={"verb": 0.25})
     song.rack("kick", surge("synth", kick()), volume=0.66)

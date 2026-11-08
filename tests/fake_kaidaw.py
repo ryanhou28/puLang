@@ -19,6 +19,8 @@ class FakeKaidaw:
         self.next_id = 1
         self.revision = 0
         self.tempo_map: list[dict[str, Any]] = [{"at": 0, "bpm": 120.0}]
+        self.meter_map: list[dict[str, Any]] = [{"at": 0, "numerator": 4, "denominator": 4}]
+        self.markers: list[dict[str, Any]] = []
         self.tracks: list[dict[str, Any]] = []
         self.clips: list[dict[str, Any]] = []
         self.plugins: dict[str, dict[str, Any]] = {}
@@ -30,6 +32,8 @@ class FakeKaidaw:
             "isMaster": True,
             "name": "Master",
             "pluginIds": [],
+            "volume": 1.0,
+            "pan": 0.0,
         }
         self._create_track("Track 1", False)
 
@@ -41,6 +45,8 @@ class FakeKaidaw:
         return copy.deepcopy(
             {
                 "tempo_map": self.tempo_map,
+                "meter_map": self.meter_map,
+                "markers": self.markers,
                 "tracks": self.tracks,
                 "master": self.master,
                 "clips": self.clips,
@@ -62,6 +68,7 @@ class FakeKaidaw:
             "parameterNames": [p.title() for p in parameters],
             "parameterValues": dict.fromkeys(parameters, 0.5),
             "automation": {},
+            "state": "",
         }
         return plugin_id
 
@@ -117,6 +124,15 @@ class FakeKaidaw:
         resolve = lambda field: self._resolve(op[field], aliases)  # noqa: E731
         if kind == "SetTempoMap":
             self.tempo_map = [dict(p) for p in op["points"]]
+            if "meters" in op:
+                self.meter_map = [dict(m) for m in op["meters"]]
+        elif kind == "SetMarkers":
+            self.markers = [dict(m) for m in op["markers"]]
+        elif kind == "RestorePluginState":
+            self.plugins[resolve("pluginId")]["state"] = op["state"]
+        elif kind == "SetControllerPoints":
+            clip = self._clip(resolve("clipId"))
+            clip.setdefault("controllers", {})[op["controller"]] = [dict(p) for p in op["points"]]
         elif kind == "CreateTrack":
             aliases[op["alias"]] = self._create_track(op["name"], op.get("withInstrument", False))
         elif kind == "SetTrackState":
@@ -124,7 +140,13 @@ class FakeKaidaw:
             track.update({k: v for k, v in op.items() if k not in ("type", "trackId")})
         elif kind == "AddPlugin":
             plugin_id = self._plugin(op["identifier"], ["cutoff", "resonance"])
-            self._track(resolve("trackId"))["pluginIds"].append(plugin_id)
+            chain = self._track(resolve("trackId"))["pluginIds"]
+            # As kaiDAW does: just before the fader, so the fader still controls it.
+            fader = next(
+                (i for i, p in enumerate(chain) if self.plugins[p]["name"].startswith("Volume")),
+                len(chain),
+            )
+            chain.insert(fader, plugin_id)
             aliases[op["alias"]] = plugin_id
         elif kind == "MovePlugin":
             plugin_id = resolve("pluginId")
@@ -197,12 +219,19 @@ class FakeKaidaw:
                 "revision": self.revision,
                 "level": level,
                 "tempoMap": copy.deepcopy(self.tempo_map),
+                "meterMap": copy.deepcopy(self.meter_map),
+                "markers": copy.deepcopy(self.markers),
                 "tracks": copy.deepcopy(self.tracks),
                 "master": copy.deepcopy(self.master),
                 "clips": copy.deepcopy(self.clips),
                 "plugins": copy.deepcopy(list(self.plugins.values())),
             }
             return projection
+        if url.path == "/plugin/state":
+            plugin_id = parse_qs(url.query)["pluginId"][0]
+            if plugin_id not in self.plugins:
+                return {"ok": False, "errors": [f"no plugin {plugin_id}"]}
+            return {"ok": True, "pluginId": plugin_id, "state": self.plugins[plugin_id]["state"]}
         if url.path == "/apply":
             if body["baseRevision"] != self.revision:
                 return {"status": "conflict", "revision": self.revision, "errors": ["stale"]}

@@ -113,10 +113,18 @@ Passes run where you ask, through a song's `pipeline`:
 | Stage | Passes |
 |---|---|
 | `intent` | `Reharmonize` (tritone_sub, jazzify, modal_interchange, secondary_dominants), `Transpose` |
-| `event` | `Swing`, `Humanize`, `Accent`, `Pump` |
+| `event` | `Swing`, `Humanize`, `Accent`, `Pump`, `Bend` |
 
 `Pump` ducks a track's fader on every hit of another. It makes the sidechain sound from a
 volume curve, so it needs no routing.
+
+`Bend` writes pitch bends on a track's long notes: a `scoop` up into the note from below, or a
+`fall` off its end. Bends go in the clip's pitch-bend lane, which every instrument hears and a
+person can redraw in the DAW, and each clip's lane is returned to rest before it ends. Run it
+after `Humanize`, so the bends follow the notes where they landed.
+
+A section's time signature and name reach kaiDAW too: its meter map shows 7/8 where the source
+says 7/8, and every section occurrence is a marker.
 
 ## Voice leading
 
@@ -177,8 +185,12 @@ decision:
   of its own.
 
 A push is one transaction, so one undo in the DAW takes it back. Pushing the first time also
-sends a second transaction for plugin parameters, and a third if any plugin has a mode to set,
-because those need ids that exist only after the tracks do.
+sends a transaction of whole patches if any device names one, then one for plugin modes if any
+has a mode to set, then one for parameters, because those need ids that exist only after the
+tracks do and Surge applies patches and modes on its next audio block.
+
+Controller lanes follow the same rule as parameters: one is sent when its source changes, so a
+bend redrawn in the DAW stays redrawn until the source changes that lane.
 
 On Slow Orbit, moving a note, deleting one, changing a fader and adding a delay, then changing
 one chord of the head in the source, updated 85 notes and left 3,495 alone. All four hand
@@ -188,6 +200,35 @@ edits survived and the deleted note was reported as stale.
 
 `pypulang.sounds` holds a measured vocabulary for Surge XT: names and units for values a host
 only sees as numbers from 0 to 1. Patches are dictionaries, so you can merge and tweak them.
+
+A device can also start from one of Surge's own factory patches, loaded whole:
+
+```python
+from pypulang import *
+from pypulang.compiler.passes.perform import Bend
+from pypulang.sounds import cutoff, surge
+
+with piece(tempo=96, key="F major", title="Patches") as song:
+    song.rack("keys", surge("synth", patch="Keys/Soft Suitcase"))
+    song.rack("lead", surge("synth", {"A Filter 1 Cutoff": cutoff(2400)}, patch="Leads/Acidofil"))
+    a = song.section("a", bars=2)
+    a.chart("Fmaj7 | Bb9")
+    a.track("keys", role=Role.HARMONY).pattern(comp).voicing("rootless", 52, 72)
+    a.track("lead", role=Role.MELODY).line("c6/2 a5 | f5/1")
+
+pipeline = {"event": [Bend(track="lead", kind="scoop", semitones=1, min_length="1/2")]}
+```
+
+Parameters given with a patch are written on top of it. The patch name stays in the IR
+(`daw.plugin "synth" is ... patch "Keys/Soft Suitcase"`) and becomes plugin state only when it
+is sent: `pypulang.sounds.surge_patches` reads the `.fxp` from Surge's install and wraps it the
+way a JUCE host stores a VST3's state, and kaiDAW's `RestorePluginState` loads it. A patch is
+sent when the source names a different one, so a patch changed inside Surge's editor stays
+changed. Set `SURGE_PATCHES` if the factory folder is somewhere unusual. Slow Orbit's Rhodes
+and pad are factory patches; the parameter-built `electric_piano()` and `warm_pad()` are still
+there to compare. One limit, kaiDAW's: after a patch loads, its projection keeps showing the
+previous patch's parameter values until the project is reopened, because Surge does not tell
+the host. Writes still reach the plugin.
 
 Everything in both songs is synthesised, including the drums. The kick's pitch drop comes from
 a resonant filter ringing as its envelope falls, measured sweeping 356 Hz to 52 Hz in 36 ms.
@@ -219,8 +260,8 @@ What exists and is tested:
 | Lowerings | All four, held note for note to the original realizer on the examples and on 150 generated pieces |
 | Voicing | Seven strategies and exact voice leading |
 | Harmony | Chart symbols, altered tensions, slash bass, reharmonization, transposition |
-| Performance | Swing, humanize, accent, pump |
-| kaiDAW | Push, pull, status, overrides, render, stems, save and reopen |
+| Performance | Swing, humanize, accent, pump, bend |
+| kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
 | Review | Melody against harmony, ranges, parallels |
 
 Not built, and described elsewhere in these docs:

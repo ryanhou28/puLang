@@ -33,15 +33,17 @@ def client() -> KaidawClient:
     return KaidawClient(transport=WslTransport(int(os.environ["KAIDAW_TEST_PORT"])))
 
 
-def play(client, tmp_path, patch, pitch):
+def play(client, tmp_path, patch, pitch, gate=2, passes=lambda name: []):
     """Push one note on a new track, and render it alone."""
     name = f"t{uuid.uuid4().hex[:8]}"
     with piece(tempo=120) as p:
         p.rack(name, patch, volume=0.74)
         s = p.section("a", bars=1)
-        s.track(name, role=Role.RHYTHM).pattern(grid(cell="x...............", pitch=pitch, gate=2))
+        s.track(name, role=Role.RHYTHM).pattern(
+            grid(cell="x...............", pitch=pitch, gate=gate)
+        )
     state = SongState(tmp_path / f"{name}.pulang")
-    push(compile_piece(p.to_ir()).daw, client, state, fresh=True)
+    push(compile_piece(p.to_ir(), event_passes=passes(name)).daw, client, state, fresh=True)
     lock = state.load_lock()
     track = lock.tracks[name]["id"]
     projection = client.projection("summary")
@@ -90,3 +92,36 @@ def test_identifier_is_the_one_installed(client):
     assert SURGE_XT in {
         p["identifier"] if "identifier" in p else p.get("id") for p in client.plugins()
     }
+
+
+def test_a_factory_patch_loads_whole(client, tmp_path):
+    from pypulang.sounds import surge_patches
+    from pypulang.sounds.surge_patches import component_of
+
+    if not surge_patches.factory_dirs():
+        pytest.skip("no Surge XT factory patches on this machine")
+    (samples, rate), plugin, _ = play(
+        client, tmp_path, surge("synth", patch="Keys/Soft Suitcase"), 60
+    )
+    # The patch's own name, read back out of the plugin's state: the factory file
+    # reached Surge whole, through RestorePluginState, and made a sound.
+    assert b'<meta name="Softsuit"' in component_of(client.plugin_state(plugin["id"]))
+    assert measure(samples, rate).rms_db > -60
+
+
+def test_a_pitch_bend_lane_bends_the_note(client, tmp_path):
+    """A two-semitone scoop over a beat: a G at the start of an A, then the A."""
+    from pypulang.compiler.passes.perform import Bend
+
+    (samples, rate), _, _ = play(
+        client,
+        tmp_path,
+        surge("synth"),
+        69,
+        gate=16,
+        passes=lambda name: [Bend(track=name, kind="scoop", semitones=2, time="1", min_length="1")],
+    )
+    start = dominant_frequency(samples[: int(0.06 * rate)], rate)
+    settled = dominant_frequency(samples[int(0.6 * rate) : int(0.9 * rate)], rate)
+    assert 380 < start < 405  # 392 Hz, two semitones under 440
+    assert 435 < settled < 445

@@ -69,7 +69,7 @@ class TempoOp(IRDLOperation):
 
 @irdl_op_definition
 class MeterOp(IRDLOperation):
-    """A time signature change. kaiDAW has no way to take this yet."""
+    """A time signature change, which kaiDAW takes as part of its tempo map."""
 
     name = "daw.meter"
     at = prop_def(IntegerAttr)
@@ -89,7 +89,7 @@ class MeterOp(IRDLOperation):
 
 @irdl_op_definition
 class MarkerOp(IRDLOperation):
-    """A named place in the timeline. kaiDAW has no way to take this yet."""
+    """A named place in the timeline: a section's start, sent as a kaiDAW marker."""
 
     name = "daw.marker"
     at = prop_def(IntegerAttr)
@@ -191,23 +191,29 @@ class PluginOp(IRDLOperation):
     A device on a track, in chain order.
 
     `device` is the local name automation refers to. `params` maps a parameter's
-    published name to a normalised value.
+    published name to a normalised value. `patch` names a preset the plugin starts
+    from, such as Surge XT's "Keys/Artificial 1"; `params` are then written on top.
+    The name stays in the IR and becomes plugin state only when it is sent.
     """
 
     name = "daw.plugin"
     device = prop_def(StringAttr)
     identifier = prop_def(StringAttr)
     params = prop_def(DictionaryAttr)
-    assembly_format = "$device `is` $identifier `with` $params attr-dict"
+    patch = opt_prop_def(StringAttr)
+    assembly_format = "$device `is` $identifier (`patch` $patch^)? `with` $params attr-dict"
 
-    def __init__(self, device: str, identifier: str, params: dict[str, object]):
-        super().__init__(
-            properties={
-                "device": StringAttr(device),
-                "identifier": StringAttr(identifier),
-                "params": to_attr(params),
-            }
-        )
+    def __init__(
+        self, device: str, identifier: str, params: dict[str, object], patch: str | None = None
+    ):
+        props: dict[str, Attribute] = {
+            "device": StringAttr(device),
+            "identifier": StringAttr(identifier),
+            "params": to_attr(params),
+        }
+        if patch is not None:
+            props["patch"] = StringAttr(patch)
+        super().__init__(properties=props)
 
 
 @irdl_op_definition
@@ -234,6 +240,9 @@ class ClipOp(IRDLOperation):
 
     def notes(self) -> list[NoteOp]:
         return [op for op in self.body.block.ops if isinstance(op, NoteOp)]
+
+    def controllers(self) -> list[ControllerOp]:
+        return [op for op in self.body.block.ops if isinstance(op, ControllerOp)]
 
 
 @irdl_op_definition
@@ -307,6 +316,37 @@ class AutomationOp(IRDLOperation):
         return [(int(t), float(v)) for t, v in zip(values[0::2], values[1::2], strict=True)]
 
 
+@irdl_op_definition
+class ControllerOp(IRDLOperation):
+    """
+    A MIDI controller lane in a clip: `pitchbend`, `pressure` or `cc0` to `cc127`.
+
+    `points` alternates tick, from the start of the clip, and a value from 0 to 1.
+    Pitch bend rests at 0.5. A controller holds its value until the next point, so a
+    smooth bend is many points.
+    """
+
+    name = "daw.controller"
+    controller = prop_def(StringAttr)
+    points = prop_def(ArrayAttr)
+    assembly_format = "$controller $points attr-dict"
+
+    def __init__(self, controller: str, points: Sequence[tuple[int, float]]):
+        flat: list[object] = []
+        for at, value in points:
+            flat.extend((int(at), float(value)))
+        super().__init__(
+            properties={
+                "controller": StringAttr(controller),
+                "points": ArrayAttr([_point_attr(v) for v in flat]),
+            }
+        )
+
+    def point_list(self) -> list[tuple[int, float]]:
+        values = [_point_value(a) for a in self.points.data]
+        return [(int(t), float(v)) for t, v in zip(values[0::2], values[1::2], strict=True)]
+
+
 def _point_attr(value: object) -> Attribute:
     return float_attr(value) if isinstance(value, float) else to_attr(value)
 
@@ -341,6 +381,7 @@ DawDialect = Dialect(
         PluginOp,
         ClipOp,
         NoteOp,
+        ControllerOp,
         AutomationOp,
         SendOp,
     ],

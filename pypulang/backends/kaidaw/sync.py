@@ -28,7 +28,8 @@ from pypulang.compiler.dialects import daw
 from pypulang.compiler.dialects.mus import from_attr
 from pypulang.compiler.locs import loc_key, name_loc
 
-# kaiDAW's master bus is addressed by this name, and holds a plugin chain but no fader.
+# kaiDAW's master bus is addressed by this name. It holds a plugin chain and, since
+# kaiDAW's song-gaps work, a fader: volume and pan, but no name or colour.
 MASTER = "master"
 
 
@@ -95,6 +96,10 @@ class DawState:
     def __init__(self, projection: dict[str, Any]):
         self.revision: int = projection["revision"]
         self.tempo_map: list[dict[str, Any]] = projection.get("tempoMap", [])
+        self.meter_map: list[dict[str, Any]] = projection.get(
+            "meterMap", [{"at": 0, "numerator": 4, "denominator": 4}]
+        )
+        self.markers: list[dict[str, Any]] = projection.get("markers", [])
         self.tracks = {t["id"]: t for t in projection["tracks"]}
         if "master" in projection:
             self.tracks[MASTER] = projection["master"]
@@ -291,10 +296,31 @@ def _plan_structure(
     """Tempo, tracks, devices, clips and notes: everything that needs no plugin schema."""
     ops: list[dict[str, Any]] = []
 
-    wanted_tempo = [{"at": t.at.value.data, "bpm": t.bpm.value.data} for t in project.tempos()]
+    # Tempo and time signatures are one map in kaiDAW, sent whole when either moves.
     current_tempo = [{"at": p["at"], "bpm": p["bpm"]} for p in state.tempo_map]
-    if wanted_tempo and wanted_tempo != current_tempo:
-        ops.append({"type": "SetTempoMap", "points": wanted_tempo})
+    wanted_tempo = [
+        {"at": t.at.value.data, "bpm": t.bpm.value.data} for t in project.tempos()
+    ] or current_tempo
+    current_meters = [
+        {"at": m["at"], "numerator": m["numerator"], "denominator": m["denominator"]}
+        for m in state.meter_map
+    ]
+    wanted_meters = [
+        {
+            "at": m.at.value.data,
+            "numerator": m.numerator.value.data,
+            "denominator": m.denominator.value.data,
+        }
+        for m in project.meters()
+    ] or current_meters
+    if wanted_tempo != current_tempo or wanted_meters != current_meters:
+        ops.append({"type": "SetTempoMap", "points": wanted_tempo, "meters": wanted_meters})
+
+    # Sections are the source's, so their markers are too: sent whole when they differ.
+    wanted_markers = [{"at": m.at.value.data, "name": m.label.data} for m in project.markers()]
+    current_markers = [{"at": m["at"], "name": m["name"]} for m in state.markers]
+    if project.markers() and wanted_markers != current_markers:
+        ops.append({"type": "SetMarkers", "markers": wanted_markers})
 
     wanted_clips: set[str] = set()
     for track in project.tracks():
@@ -317,8 +343,7 @@ def _plan_structure(
         else:
             track_ref = info["id"]
 
-        if name != MASTER:
-            ops.extend(_plan_mix(track, track_ref, info))
+        ops.extend(_plan_mix(track, track_ref, info))
         ops.extend(_plan_devices(track, track_ref, lock))
 
         for clip in track.clips():
@@ -341,7 +366,11 @@ def _plan_mix(
         change["volume"] = track.volume.value.data
     if track.pan is not None and last.get("pan") != track.pan.value.data:
         change["pan"] = track.pan.value.data
-    if track.color is not None and last.get("color") != track.color.data:
+    if (
+        track.color is not None
+        and last.get("color") != track.color.data
+        and track.track.data != MASTER  # the master has no colour to set
+    ):
         change["color"] = track.color.data
     if not change:
         return []
@@ -366,8 +395,9 @@ def _plan_devices(track: daw.TrackOp, track_ref: str, lock: Lock) -> list[dict[s
                 "identifier": device.identifier.data,
             }
         )
-        # AddPlugin appends after the fader and meter, where an instrument would
-        # bypass both.
+        # kaiDAW inserts a plugin just before the fader, so devices added in order
+        # land in order. A device replaced in the middle of a chain still lands at
+        # the end of the devices, which is what this puts right.
         ops.append({"type": "MovePlugin", "pluginId": alias, "index": index})
     return ops
 
@@ -382,16 +412,18 @@ def _plan_clip(
     if info is None or info["id"] not in state.clips:
         report.clips_created += 1
         report.notes_added += len(wanted)
+        alias = f"$clip_{key}".replace("#", "_").replace("/", "_").replace(" ", "_")
         return [
             {
                 "type": "CreateClip",
-                "alias": f"$clip_{key}".replace("#", "_").replace("/", "_").replace(" ", "_"),
+                "alias": alias,
                 "trackId": track_ref,
                 "name": key,
                 "start": clip.start.value.data,
                 "length": clip.length.value.data,
                 "notes": [_wire_note(n) for n in wanted.values()],
-            }
+            },
+            *_plan_controllers(clip, alias, {}),
         ]
 
     ops: list[dict[str, Any]] = []
@@ -427,6 +459,33 @@ def _plan_clip(
         ops.append({"type": "UpsertNotes", "clipId": clip_id, "notes": upserts})
     if deletions:
         ops.append({"type": "DeleteNotes", "clipId": clip_id, "noteIds": deletions})
+    ops.extend(_plan_controllers(clip, clip_id, lock.controllers))
+    return ops
+
+
+def _plan_controllers(
+    clip: daw.ClipOp, clip_ref: str, pushed: dict[str, list[list[float]]]
+) -> list[dict[str, Any]]:
+    """
+    Controller lanes whose source changed since the last push.
+
+    Compared with what was pushed, not with the DAW, for the reason parameters are:
+    a bend redrawn in the DAW stays redrawn until the source says otherwise. A lane
+    the source stops making is left alone too, as a hand-drawn one would be.
+    """
+    ops = []
+    for lane in clip.controllers():
+        points = [[t, v] for t, v in lane.point_list()]
+        if pushed.get(f"{clip.key.data}/{lane.controller.data}") == points:
+            continue
+        ops.append(
+            {
+                "type": "SetControllerPoints",
+                "clipId": clip_ref,
+                "controller": lane.controller.data,
+                "points": [{"at": t, "value": v} for t, v in points],
+            }
+        )
     return ops
 
 
@@ -438,6 +497,50 @@ def _is_selector(name: str) -> bool:
     it does so on the next audio block rather than at once. See `_flush`.
     """
     return name.endswith(" Type")
+
+
+def patch_state(identifier: str, patch: str) -> str:
+    """
+    A named patch as plugin state, for the plugins puLang knows how to read.
+
+    Raises:
+        KaidawError: For a plugin with no patch reader, or a patch not found
+    """
+    from pypulang.sounds.surge import SURGE_XT
+    from pypulang.sounds.surge_patches import patch_state as surge_patch_state
+
+    if identifier != SURGE_XT:
+        raise KaidawError(f"puLang cannot read patches for {identifier!r}")
+    try:
+        return surge_patch_state(patch)
+    except (FileNotFoundError, ValueError) as error:
+        raise KaidawError(str(error)) from error
+
+
+def _plan_patches(project: daw.ProjectOp, lock: Lock) -> list[dict[str, Any]]:
+    """
+    Whole-patch loads, for devices whose source names a different patch than last push.
+
+    A patch replaces every parameter, so a device whose patch changes has the
+    parameters its source declares written again on top, even unchanged ones.
+    """
+    ops: list[dict[str, Any]] = []
+    for track in project.tracks():
+        for device in track.plugins():
+            if device.patch is None:
+                continue
+            entry = lock.devices[f"{track.track.data}/{device.device.data}"]
+            if entry.get("patch") == device.patch.data:
+                continue
+            ops.append(
+                {
+                    "type": "RestorePluginState",
+                    "pluginId": entry["id"],
+                    "state": patch_state(entry["identifier"], device.patch.data),
+                }
+            )
+            entry["params"] = {}
+    return ops
 
 
 def _plan_parameters(
@@ -585,6 +688,10 @@ def _record(project: daw.ProjectOp, lock: Lock, state: DawState, aliases: dict[s
                 "length": clip.length.value.data,
             }
             _record_notes(clip, key, clip_id, lock, state, new_notes)
+            for lane in clip.controllers():
+                lock.controllers[f"{key}/{lane.controller.data}"] = [
+                    [t, v] for t, v in lane.point_list()
+                ]
     lock.clips = new_clips
     lock.notes = new_notes
 
@@ -629,6 +736,8 @@ def _record_parameters(project: daw.ProjectOp, lock: Lock) -> None:
         for device in track.plugins():
             entry = lock.devices[f"{name}/{device.device.data}"]
             entry["params"].update(_params(device))
+            if device.patch is not None:
+                entry["patch"] = device.patch.data
         for automation in track.automations():
             target = f"{name}/{automation.device.data}/{automation.param.data}"
             lock.automations[target] = [[t, v] for t, v in automation.point_list()]
@@ -701,16 +810,6 @@ def push(
     report.captured = capture(lock, overrides, state)
     apply_overrides(module, overrides, report)
     project = _project(module)
-    if (
-        project.meters()
-        and len(project.meters()) > 1
-        or any(
-            m.numerator.value.data != 4 or m.denominator.value.data != 4 for m in project.meters()
-        )
-    ):
-        report.warnings.append(
-            "kaiDAW has no time signatures yet: notes land correctly but its bar lines are 4/4"
-        )
 
     structure = _plan_structure(project, lock, state, report)
     report.operations = len(structure)
@@ -725,6 +824,16 @@ def push(
         revision = result["revision"]
         state = DawState(client.projection())
     _record(project, lock, state, aliases)
+
+    # Patches first and alone: Surge XT loads a state on its next audio block, so a
+    # parameter written in the same breath would be overwritten by the patch.
+    patches = _plan_patches(project, lock)
+    report.operations += len(patches)
+    if patches:
+        result = client.apply(patches, revision, "pulang push: patches")
+        revision = result["revision"]
+        client.flush_plugins()
+        state = DawState(client.projection())
 
     selectors, parameters = _plan_parameters(project, lock, state, report)
     report.operations += len(selectors) + len(parameters)

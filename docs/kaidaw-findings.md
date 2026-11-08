@@ -4,6 +4,26 @@ Writing two real songs through kaiDAW's protocol is the test its own `AGENTS.md`
 No kaiDAW code changed during this work. These are the findings, most useful first, against
 the build from 2026-09-11.
 
+**Update, 2026-11-07.** kaiDAW's `song-gaps` branch addressed most of this, and puLang uses
+all of it:
+
+| Finding | Now |
+|---|---|
+| The crash | Found and fixed: an undo action held a Surge parameter after Tracktion freed the plugin on a one-second timer. A second crash, re-opening an open audio device, was found and fixed on the way. |
+| Time signatures | `SetTempoMap` takes meters; Slow Orbit's ruler shows its 7/8 sections |
+| Pitch bend and CC | `SetControllerPoints`; puLang's `Bend` pass writes scoops and falls, measured bending a note exactly two semitones |
+| Plugin state | `RestorePluginState`; puLang loads Surge factory patches whole. Slow Orbit's Rhodes and pad use them. |
+| Section markers | `SetMarkers`; every section occurrence is one |
+| A master fader | `SetTrackState` on `master` takes volume and pan |
+| `AddPlugin` after the fader | Inserts before it now |
+| `metadata` | Accepted on the envelope |
+
+Still open: samples and audio clips, sidechain routing, dry stems, unrepeatable bounces, and
+the 127.0.0.1 binding (deliberate until kaiDAW has a security design). `/apply` still lists
+no note ids, also deliberately: a clip of 2,000 notes would make a result bigger than its
+command, and puLang matches new notes on content, exactly. After a Surge patch loads, kaiDAW's
+projection shows the previous patch's values until reopen, because Surge does not tell the host.
+
 ## A crash to look at first
 
 **The server has died twice with an access violation.** Exit code 5 from WSL is Windows'

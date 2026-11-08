@@ -122,13 +122,28 @@ _BASE = {
 }
 
 
-def surge(name: str = "synth", *patches: dict[str, float], **params: float) -> Device:
-    """A Surge XT device from one or more patches, later ones winning."""
-    merged = dict(_BASE)
-    for patch in patches:
-        merged.update(patch)
+def surge(
+    name: str = "synth",
+    *patches: dict[str, float],
+    patch: str | None = None,
+    **params: float,
+) -> Device:
+    """
+    A Surge XT device from one or more parameter sets, later ones winning.
+
+    Args:
+        name: Local name, which automation targets refer to
+        patches: Parameter sets, such as `electric_piano()`
+        patch: A Surge factory patch to start from, such as "Keys/Artificial 1".
+            When given, only the parameter sets and keywords passed here are written
+            on top of it, not the defaults that make a sound from Init Saw.
+        params: Single parameters, with underscores for spaces
+    """
+    merged = {} if patch is not None else dict(_BASE)
+    for extra in patches:
+        merged.update(extra)
     merged.update({k.replace("_", " "): v for k, v in params.items()})
-    return Device(name=name, identifier=SURGE_XT, params=merged)
+    return Device(name=name, identifier=SURGE_XT, params=merged, patch=patch)
 
 
 def amp(attack: float, decay: float, sustain: float, release: float) -> dict[str, float]:

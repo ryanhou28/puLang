@@ -63,7 +63,7 @@ def _section_op(section: Section) -> intent.SectionOp:
 
 
 def _rack_op(rack: Rack) -> daw.RackOp:
-    ops: list = [daw.PluginOp(d.name, d.identifier, dict(d.params)) for d in rack.devices]
+    ops: list = [daw.PluginOp(d.name, d.identifier, dict(d.params), d.patch) for d in rack.devices]
     ops.extend(daw.SendOp(destination, gain) for destination, gain in rack.sends.items())
     op = daw.RackOp(rack.track, ops, rack.volume, rack.pan, rack.color)
     op.location = name_loc(f"rack/{rack.track}")

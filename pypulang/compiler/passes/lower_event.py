@@ -51,9 +51,50 @@ def _section_of(note: event.NoteOp, sections: list[event.SectionOp]) -> event.Se
     return sections[-1]
 
 
+# The plugin-less device whose curves are MIDI controller lanes, and where each rests.
+MIDI_DEVICE = "midi"
+REST = {"pitchbend": 0.5}
+
+
+def _lanes(track: event.TrackOp) -> dict[str, list[tuple[int, float]]]:
+    """Controller lanes, by controller name, in absolute ticks."""
+    lanes: dict[str, list[tuple[int, float]]] = {}
+    for curve in track.curves():
+        device, _, controller = curve.target.data.partition(".")
+        if device != MIDI_DEVICE:
+            continue
+        points = lanes.setdefault(controller, [])
+        points.extend((ticks(at), float(value)) for at, value in curve.point_list())
+    return {name: sorted(points) for name, points in lanes.items()}
+
+
+def _controllers(
+    lanes: dict[str, list[tuple[int, float]]], clip_start: int, clip_length: int
+) -> list[daw.ControllerOp]:
+    """
+    The part of each lane inside one clip, relative to its start.
+
+    A lane with a resting value is returned to it before the clip ends: a bend left
+    hanging at the end of a clip would bend whatever plays next on that track.
+    """
+    result = []
+    for name, points in lanes.items():
+        inside = [
+            (t - clip_start, v) for t, v in points if clip_start <= t < clip_start + clip_length
+        ]
+        if not inside:
+            continue
+        rest = REST.get(name)
+        if rest is not None and inside[-1][1] != rest:
+            inside.append((min(inside[-1][0] + 1, clip_length - 1), rest))
+        result.append(daw.ControllerOp(name, inside))
+    return result
+
+
 def _clips(
     track: event.TrackOp, sections: list[event.SectionOp]
 ) -> tuple[list[daw.ClipOp], int, int]:
+    lanes = _lanes(track)
     groups: dict[str, list[event.NoteOp]] = {}
     for note in track.notes():
         groups.setdefault(_section_of(note, sections).tag.data, []).append(note)
@@ -88,7 +129,12 @@ def _clips(
             )
             lowered.location = note.location
             notes.append(lowered)
-        clip = daw.ClipOp(f"{tag}/{track.track.data}", clip_start, clip_length, notes)
+        clip = daw.ClipOp(
+            f"{tag}/{track.track.data}",
+            clip_start,
+            clip_length,
+            [*notes, *_controllers(lanes, clip_start, clip_length)],
+        )
         clip.location = section.location
         clips.append(clip)
     return clips, inexact, clipped
@@ -98,6 +144,8 @@ def _automations(track: event.TrackOp) -> list[daw.AutomationOp]:
     """One automation op per target, joining a curve's occurrences across the form."""
     merged: dict[str, list[tuple[int, float]]] = {}
     for curve in track.curves():
+        if curve.target.data.partition(".")[0] == MIDI_DEVICE:
+            continue  # controller lanes travel in the clips; see `_controllers`
         points = merged.setdefault(curve.target.data, [])
         points.extend((ticks(at), float(value)) for at, value in curve.point_list())
     result = []
