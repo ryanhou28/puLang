@@ -60,4 +60,4 @@ htmlcov/
 Thumbs.db
 
 # A song's lock file names objects in one local project. Its overrides are part of the song.
-*.pulang/lock.json
+**/*.pulang/lock.json
