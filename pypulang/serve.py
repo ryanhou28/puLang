@@ -195,9 +195,10 @@ class Companion:
         view = model.clip(clip_id, note_ids) if clip_id else None
         back = "/inspect?" + urlencode({"clipId": clip_id, "noteIds": ",".join(note_ids)})
         body = [f"<h1>{_e(self._title)}</h1>"]
+        # Kept until the next action: kaiDAW reloads this page when the push it
+        # caused lands, and a message cleared on first view would flash and vanish.
         if self.message:
             body.append(f'<p class="msg">{_e(self.message)}</p>')
-            self.message = ""
         if view is None:
             body.append(
                 '<p class="dim">Select a clip in kaiDAW, or notes in its piano roll, to see '
