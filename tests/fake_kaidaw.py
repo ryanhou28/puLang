@@ -21,6 +21,8 @@ class FakeKaidaw:
         self.tempo_map: list[dict[str, Any]] = [{"at": 0, "bpm": 120.0}]
         self.meter_map: list[dict[str, Any]] = [{"at": 0, "numerator": 4, "denominator": 4}]
         self.markers: list[dict[str, Any]] = []
+        self.assets: dict[str, dict[str, Any]] = {}
+        self.uploads = 0
         self.tracks: list[dict[str, Any]] = []
         self.clips: list[dict[str, Any]] = []
         self.plugins: dict[str, dict[str, Any]] = {}
@@ -130,6 +132,38 @@ class FakeKaidaw:
             self.markers = [dict(m) for m in op["markers"]]
         elif kind == "RestorePluginState":
             self.plugins[resolve("pluginId")]["state"] = op["state"]
+        elif kind == "CreateAudioClip":
+            asset = self.assets[op["assetId"]]
+            bpm = self.tempo_map[0]["bpm"]
+            length = op.get("length") or round(
+                (asset["seconds"] - op.get("offsetSeconds", 0.0)) * bpm / 60 * 960
+            )
+            clip_id = self._mint("clip")
+            self.clips.append(
+                {
+                    "id": clip_id,
+                    "trackId": resolve("trackId"),
+                    "name": op.get("name") or asset["name"],
+                    "start": op.get("start", 0),
+                    "length": length,
+                    "muted": False,
+                    "kind": "audio",
+                    "assetId": op["assetId"],
+                    "offsetSeconds": op.get("offsetSeconds", 0.0),
+                    "gainDb": op.get("gainDb", 0.0),
+                    "notes": [],
+                }
+            )
+            if op.get("alias"):
+                aliases[op["alias"]] = clip_id
+        elif kind == "SetSamplerSounds":
+            for sound in op["sounds"]:
+                if sound["assetId"] not in self.assets:
+                    raise KeyError(f"no asset {sound['assetId']}")
+            self.plugins[resolve("pluginId")]["sounds"] = [dict(s) for s in op["sounds"]]
+        elif kind == "SetClipState" and "gainDb" in op:
+            clip = self._clip(resolve("clipId"))
+            clip["gainDb"] = op["gainDb"]
         elif kind == "SetControllerPoints":
             clip = self._clip(resolve("clipId"))
             clip.setdefault("controllers", {})[op["controller"]] = [dict(p) for p in op["points"]]
@@ -209,6 +243,32 @@ class FakeKaidaw:
         else:
             raise ValueError(f"fake does not model {kind}")
 
+    def upload(self, file: Any, path: str) -> Any:
+        """The fake reads WAVs with the standard library; the id is a content hash."""
+        import hashlib
+        import wave
+        from pathlib import Path
+
+        self.uploads += 1
+        data = Path(file).read_bytes()
+        name = parse_qs(urlparse(path).query)["name"][0]
+        try:
+            with wave.open(str(file)) as w:
+                seconds = w.getnframes() / w.getframerate()
+                channels = w.getnchannels()
+                rate = w.getframerate()
+        except (wave.Error, EOFError):
+            return {"ok": False, "errors": [f"{name} is not a WAV file"]}
+        asset_id = "asset-" + hashlib.sha256(data).hexdigest()[:16]
+        self.assets[asset_id] = {
+            "id": asset_id,
+            "name": name,
+            "seconds": seconds,
+            "channels": channels,
+            "sampleRate": rate,
+        }
+        return {"ok": True, "asset": self.assets[asset_id]}
+
     def request(self, method: str, path: str, body: Any = None) -> Any:
         url = urlparse(path)
         if url.path == "/health":
@@ -227,6 +287,8 @@ class FakeKaidaw:
                 "plugins": copy.deepcopy(list(self.plugins.values())),
             }
             return projection
+        if url.path == "/assets" and method == "GET":
+            return {"ok": True, "assets": list(self.assets.values())}
         if url.path == "/plugin/state":
             plugin_id = parse_qs(url.query)["pluginId"][0]
             if plugin_id not in self.plugins:

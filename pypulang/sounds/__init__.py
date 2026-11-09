@@ -8,13 +8,13 @@ file can stay about the music.
 from __future__ import annotations
 
 from pypulang.dsl import PieceBuilder, Role, SectionBuilder, device, grid
+from pypulang.ir.intent import Device
 from pypulang.sounds.surge import (
     SURGE_XT,
     chop,
     clap,
     cutoff,
     electric_bass,
-    electric_piano,
     gain,
     hat,
     impact,
@@ -32,12 +32,44 @@ from pypulang.sounds.surge import (
 
 __all__ = [
     "SURGE_XT",
+    "sampler",
     "cutoff",
     "fusion_drums",
     "fusion_rack",
     "future_bass_rack",
     "surge",
 ]
+
+
+def sampler(
+    name: str, sounds: dict[int, str | dict], one_shot: bool = True, gain_db: float = 0.0
+) -> Device:
+    """
+    kaiDAW's sampler, with audio files on keys.
+
+    Args:
+        name: Local name, as for any device
+        sounds: Key to a file path (relative to the song), or to a dict with "file" and
+            any of "root", "low", "high", "gain", "pan", "one_shot". A bare path plays
+            on its key alone, which is what a drum pad is.
+        one_shot: Whether a sound plays to its end however short the note is
+        gain_db: The default gain of every sound
+
+    Example:
+        song.rack("drums", sampler("kit", {36: "samples/kick.wav", 38: "samples/snare.wav"}))
+    """
+    specs = []
+    for key, sound in sorted(sounds.items()):
+        spec = {"file": sound} if isinstance(sound, str) else dict(sound)
+        spec.setdefault("root", key)
+        spec.setdefault("low", key)
+        spec.setdefault("high", key)
+        spec.setdefault("gain", gain_db)
+        spec.setdefault("pan", 0.0)
+        spec.setdefault("one_shot", one_shot)
+        specs.append(spec)
+    return Device(name=name, identifier="sampler", params={}, sounds=specs)
+
 
 # Where each drum patch wants to be played.
 KICK_NOTE = 31
@@ -81,7 +113,11 @@ def fusion_rack(song: PieceBuilder) -> None:
         sends={"verb": 0.2},
     )
     song.rack(
-        "pad", surge("synth", patch="Pads/MKS-70 Warm Pad"), volume=0.5, pan=0.1, sends={"verb": 0.35}
+        "pad",
+        surge("synth", patch="Pads/MKS-70 Warm Pad"),
+        volume=0.5,
+        pan=0.1,
+        sends={"verb": 0.35},
     )
     song.rack("bass", surge("synth", electric_bass()), volume=0.68)
     song.rack("lead", surge("synth", mono_lead()), volume=0.62, pan=0.05, sends={"verb": 0.25})

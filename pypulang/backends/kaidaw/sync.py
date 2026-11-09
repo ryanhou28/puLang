@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from xdsl.dialects.builtin import IntegerAttr, ModuleOp, i64
@@ -218,6 +219,20 @@ def apply_overrides(module: ModuleOp, overrides: Overrides, report: SyncReport) 
     seen: set[str] = set()
 
     for track in project.tracks():
+        # Audio clips are moved, resized and deleted by hand like any clip; they
+        # have no notes, so the clip directives are all there is to apply.
+        for audio in track.audio_clips():
+            directive = overrides.clips.get(audio.key.data, {})
+            if directive.get("deleted"):
+                track.body.block.detach_op(audio)
+                continue
+            if "start" in directive:
+                audio.properties["start"] = IntegerAttr(directive["start"], i64)
+            if "length" in directive:
+                audio.properties["length"] = IntegerAttr(directive["length"], i64)
+            if "track" in directive and directive["track"] in tracks:
+                track.body.block.detach_op(audio)
+                tracks[directive["track"]].body.block.add_op(audio)
         for clip in track.clips():
             key = clip.key.data
             directive = overrides.clips.get(key, {})
@@ -291,7 +306,11 @@ def _schema(lock: Lock, state: DawState, identifier: str, plugin_id: str) -> dic
 
 
 def _plan_structure(
-    project: daw.ProjectOp, lock: Lock, state: DawState, report: SyncReport
+    project: daw.ProjectOp,
+    lock: Lock,
+    state: DawState,
+    report: SyncReport,
+    assets: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Tempo, tracks, devices, clips and notes: everything that needs no plugin schema."""
     ops: list[dict[str, Any]] = []
@@ -349,12 +368,123 @@ def _plan_structure(
         for clip in track.clips():
             wanted_clips.add(clip.key.data)
             ops.extend(_plan_clip(clip, track_ref, lock, state, report))
+        for audio in track.audio_clips():
+            wanted_clips.add(audio.key.data)
+            ops.extend(_plan_audio(audio, track_ref, lock, state, report, assets or {}))
 
     for clip_key, info in lock.clips.items():
         if clip_key not in wanted_clips and info["id"] in state.clips:
             ops.append({"type": "DeleteClip", "clipId": info["id"]})
             report.clips_deleted += 1
     return ops
+
+
+def _audio_record(audio: daw.AudioClipOp, asset: str) -> dict[str, Any]:
+    return {
+        "asset": asset,
+        "start": audio.start.value.data,
+        "length": audio.length.value.data if audio.length is not None else None,
+        "offset": audio.offset.value.data,
+        "gain": audio.gain.value.data,
+    }
+
+
+def _plan_audio(
+    audio: daw.AudioClipOp,
+    track_ref: str,
+    lock: Lock,
+    state: DawState,
+    report: SyncReport,
+    assets: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    An audio clip, created or brought in line with the source.
+
+    Compared with the last push, as notes and parameters are: a clip moved in the
+    DAW is captured as an override and is already in `audio` by the time this runs.
+    A different file or offset is a different clip, so it is replaced.
+    """
+    key = audio.key.data
+    asset = assets.get(audio.file.data, {}).get("id")
+    if asset is None:
+        report.warnings.append(f"{key}: no audio for {audio.file.data}")
+        return []
+    wanted = _audio_record(audio, asset)
+    info = lock.clips.get(key)
+    live = info is not None and info["id"] in state.clips
+    create = {
+        "type": "CreateAudioClip",
+        "alias": "$audio_" + key.replace("#", "_").replace("/", "_").replace(" ", "_"),
+        "trackId": track_ref,
+        "assetId": asset,
+        "name": key,
+        "start": wanted["start"],
+        "offsetSeconds": wanted["offset"],
+        "gainDb": wanted["gain"],
+    }
+    if wanted["length"] is not None:
+        create["length"] = wanted["length"]
+    if not live:
+        report.clips_created += 1
+        return [create]
+    before = info.get("audio", {})
+    clip_id = info["id"]
+    if before.get("asset") != asset or before.get("offset") != wanted["offset"]:
+        report.clips_created += 1
+        report.clips_deleted += 1
+        return [{"type": "DeleteClip", "clipId": clip_id}, create]
+    ops: list[dict[str, Any]] = []
+    if before.get("start") != wanted["start"]:
+        ops.append({"type": "MoveClip", "clipId": clip_id, "start": wanted["start"]})
+    if wanted["length"] is not None and before.get("length") != wanted["length"]:
+        ops.append({"type": "ResizeClip", "clipId": clip_id, "length": wanted["length"]})
+    if before.get("gain") != wanted["gain"]:
+        ops.append({"type": "SetClipState", "clipId": clip_id, "gainDb": wanted["gain"]})
+    return ops
+
+
+def import_assets(
+    project: daw.ProjectOp, client: KaidawClient, lock: Lock, base: Path
+) -> dict[str, dict[str, Any]]:
+    """
+    Every audio file the project uses, in kaiDAW's pool.
+
+    Files are named relative to the song. One already imported is not sent again
+    unless it changed on disk or the server has lost it (a fresh server, say).
+
+    Returns:
+        File as the song names it, to the asset
+    """
+    files = {a.file.data for t in project.tracks() for a in t.audio_clips()}
+    files |= {str(s["file"]) for t in project.tracks() for d in t.plugins() for s in d.sound_list()}
+    if not files:
+        return {}
+    pool = {a["id"] for a in client.assets()}
+    result: dict[str, dict[str, Any]] = {}
+    for name in sorted(files):
+        path = (base / name).resolve()
+        if not path.is_file():
+            raise KaidawError(f"no audio file {name} (looked at {path})")
+        stat = path.stat()
+        known = lock.assets.get(str(path))
+        if (
+            known
+            and known["size"] == stat.st_size
+            and known["mtime"] == stat.st_mtime
+            and known["id"] in pool
+        ):
+            result[name] = known
+            continue
+        asset = client.import_asset(path)
+        entry = {
+            "id": asset["id"],
+            "seconds": asset["seconds"],
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+        }
+        lock.assets[str(path)] = entry
+        result[name] = entry
+    return result
 
 
 def _plan_mix(
@@ -609,6 +739,38 @@ def _plan_parameters(
     return selectors, ops
 
 
+def _sound_specs(device: daw.PluginOp, assets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "assetId": assets[str(s["file"])]["id"],
+            "rootNote": int(s["root"]),
+            "lowNote": int(s["low"]),
+            "highNote": int(s["high"]),
+            "gainDb": float(s["gain"]),
+            "pan": float(s["pan"]),
+            "openEnded": bool(s["one_shot"]),
+        }
+        for s in device.sound_list()
+    ]
+
+
+def _plan_sounds(
+    project: daw.ProjectOp, lock: Lock, assets: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """A sampler's sounds, sent whole when the source's list changes."""
+    ops = []
+    for track in project.tracks():
+        for device in track.plugins():
+            if not device.sound_list():
+                continue
+            entry = lock.devices[f"{track.track.data}/{device.device.data}"]
+            sounds = _sound_specs(device, assets)
+            if entry.get("sounds") != sounds:
+                ops.append({"type": "SetSamplerSounds", "pluginId": entry["id"], "sounds": sounds})
+                entry["sounds"] = sounds
+    return ops
+
+
 def _params(device: daw.PluginOp) -> dict[str, float]:
     return {k: float(v) for k, v in from_attr(device.params).items()}
 
@@ -692,6 +854,21 @@ def _record(project: daw.ProjectOp, lock: Lock, state: DawState, aliases: dict[s
                 lock.controllers[f"{key}/{lane.controller.data}"] = [
                     [t, v] for t, v in lane.point_list()
                 ]
+        for audio in track.audio_clips():
+            key = audio.key.data
+            previous_clip = lock.clips.get(key)
+            if previous_clip is not None and previous_clip["id"] in state.clips:
+                clip_id = previous_clip["id"]
+            else:
+                clip_id = by_clip_name[key]
+            live = state.clips[clip_id]
+            new_clips[key] = {
+                "id": clip_id,
+                "track": name,
+                "start": live["start"],
+                "length": live["length"],
+                "audio": _audio_record(audio, live.get("assetId", "")),
+            }
     lock.clips = new_clips
     lock.notes = new_notes
 
@@ -811,10 +988,12 @@ def push(
     apply_overrides(module, overrides, report)
     project = _project(module)
 
-    structure = _plan_structure(project, lock, state, report)
-    report.operations = len(structure)
     if dry_run:
+        report.operations = len(_plan_structure(project, lock, state, report, {}))
         return report
+    assets = import_assets(project, client, lock, song.directory.parent)
+    structure = _plan_structure(project, lock, state, report, assets)
+    report.operations = len(structure)
 
     aliases: dict[str, str] = {}
     revision = state.revision
@@ -836,6 +1015,7 @@ def push(
         state = DawState(client.projection())
 
     selectors, parameters = _plan_parameters(project, lock, state, report)
+    parameters.extend(_plan_sounds(project, lock, assets))
     report.operations += len(selectors) + len(parameters)
     if selectors:
         result = client.apply(selectors, revision, "pulang push: plugin modes")

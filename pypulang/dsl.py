@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Union
 
 from pypulang.harmony import parse_chart
 from pypulang.ir.intent import (
+    AudioPlacement,
     Chord,
     ChordChange,
     Curve,
@@ -419,9 +420,7 @@ class TrackBuilder:
         self._muted: bool = False
         self._voicing: str | None = None
 
-    def pattern(
-        self, pattern: PatternBuilder | str, **kwargs: Any
-    ) -> TrackBuilder:
+    def pattern(self, pattern: PatternBuilder | str, **kwargs: Any) -> TrackBuilder:
         """Set the pattern for this track."""
         if isinstance(pattern, str):
             self._content = Pattern(pattern_type=pattern, params=kwargs)
@@ -469,24 +468,28 @@ class TrackBuilder:
             if isinstance(item, NoteSpec):
                 # NoteSpec from note() or rest()
                 beats = note_value_to_beats(item.duration)
-                ir_notes.append(Note(
-                    pitch=item.pitch,
-                    duration=beats,
-                    velocity=item.velocity,
-                    offset=current_offset,
-                ))
+                ir_notes.append(
+                    Note(
+                        pitch=item.pitch,
+                        duration=beats,
+                        velocity=item.velocity,
+                        offset=current_offset,
+                    )
+                )
                 current_offset += beats
 
             elif isinstance(item, ChordSpec):
                 # ChordSpec from chord() - multiple simultaneous notes
                 beats = note_value_to_beats(item.duration)
                 for pitch in item.pitches:
-                    ir_notes.append(Note(
-                        pitch=pitch,
-                        duration=beats,
-                        velocity=item.velocity,
-                        offset=current_offset,
-                    ))
+                    ir_notes.append(
+                        Note(
+                            pitch=pitch,
+                            duration=beats,
+                            velocity=item.velocity,
+                            offset=current_offset,
+                        )
+                    )
                 current_offset += beats
 
             elif isinstance(item, tuple):
@@ -500,18 +503,19 @@ class TrackBuilder:
                     raise ValueError(f"Invalid note tuple: {item}. Expected 2 or 3 elements.")
 
                 beats = note_value_to_beats(duration)
-                ir_notes.append(Note(
-                    pitch=int(pitch),
-                    duration=beats,
-                    velocity=velocity,
-                    offset=current_offset,
-                ))
+                ir_notes.append(
+                    Note(
+                        pitch=int(pitch),
+                        duration=beats,
+                        velocity=velocity,
+                        offset=current_offset,
+                    )
+                )
                 current_offset += beats
 
             else:
                 raise TypeError(
-                    f"Invalid note type: {type(item)}. "
-                    "Expected tuple, NoteSpec, or ChordSpec."
+                    f"Invalid note type: {type(item)}. Expected tuple, NoteSpec, or ChordSpec."
                 )
 
         self._content = Notes(notes=ir_notes)
@@ -545,9 +549,7 @@ class TrackBuilder:
         self._content = Notes(notes=notes)
         return self
 
-    def voicing(
-        self, name: str, low: int | None = None, high: int | None = None
-    ) -> TrackBuilder:
+    def voicing(self, name: str, low: int | None = None, high: int | None = None) -> TrackBuilder:
         """
         Choose how this track voices its chords.
 
@@ -643,6 +645,7 @@ class SectionBuilder:
         self._harmony: Harmony = Harmony()
         self._tracks: list[TrackBuilder] = []
         self._curves: list[Curve] = []
+        self._audio: list[AudioPlacement] = []
 
     @property
     def name(self) -> str:
@@ -799,7 +802,10 @@ class SectionBuilder:
                 copied._octave_shift = track._octave_shift + register
             if isinstance(track._content, Notes) and transpose and track._role != Role.RHYTHM:
                 copied._content = Notes(
-                    notes=[replace(n, pitch=n.pitch + transpose) if n.pitch >= 0 else n for n in track._content.notes]
+                    notes=[
+                        replace(n, pitch=n.pitch + transpose) if n.pitch >= 0 else n
+                        for n in track._content.notes
+                    ]
                 )
             section._tracks.append(copied)
         section._curves = list(self._curves)
@@ -831,6 +837,43 @@ class SectionBuilder:
         self._curves.append(Curve(track=track, target=target, points=converted))
         return self
 
+    def audio(
+        self,
+        track: str,
+        file: str,
+        at: float | Fraction = 0,
+        length: float | Fraction | None = None,
+        offset: float = 0.0,
+        gain_db: float = 0.0,
+    ) -> SectionBuilder:
+        """
+        Play an audio file on a track during this section: a vocal chop, a riser, a loop.
+
+        Args:
+            track: Track name. A track that only plays audio needs no rack.
+            file: Path to a WAV, AIFF or FLAC, relative to the song file
+            at: Bars from the section start
+            length: Bars, or None to play the rest of the file
+            offset: Seconds into the file to start from
+            gain_db: Clip gain in decibels
+
+        Example:
+            drop.audio("vox", "samples/chop.wav", at=1, length=1/2)
+        """
+        meter = self._time_signature or self._piece._time_signature
+        bars = lambda v: Fraction(v).limit_denominator(3840) * meter.beats_per_bar  # noqa: E731
+        self._audio.append(
+            AudioPlacement(
+                track=track,
+                file=file,
+                at=bars(at),
+                length=None if length is None else bars(length),
+                offset=float(offset),
+                gain=float(gain_db),
+            )
+        )
+        return self
+
     def _to_ir(self) -> Section:
         """Convert to IR Section object."""
         return Section(
@@ -841,6 +884,7 @@ class SectionBuilder:
             harmony=self._harmony,
             tracks=[t._to_ir() for t in self._tracks],
             curves=list(self._curves),
+            audio=list(self._audio),
         )
 
 
@@ -907,9 +951,7 @@ class PieceBuilder:
         section_time_sig = None
         if time_sig is not None:
             section_time_sig = (
-                TimeSignature.parse(time_sig)
-                if isinstance(time_sig, str)
-                else time_sig
+                TimeSignature.parse(time_sig) if isinstance(time_sig, str) else time_sig
             )
 
         section = SectionBuilder(
@@ -965,9 +1007,7 @@ class PieceBuilder:
         Args:
             sections: List of sections or section names in play order.
         """
-        self._form = [
-            s._name if isinstance(s, SectionBuilder) else s for s in sections
-        ]
+        self._form = [s._name if isinstance(s, SectionBuilder) else s for s in sections]
         return self
 
     def to_ir(self) -> Piece:
@@ -1067,9 +1107,7 @@ class PieceBuilder:
         elif path.endswith(".wav"):
             self.save_audio(path, **kwargs)
         else:
-            raise ValueError(
-                f"Unknown file format: {path}. Supported: .mid, .midi, .wav"
-            )
+            raise ValueError(f"Unknown file format: {path}. Supported: .mid, .midi, .wav")
 
     # -------------------------------------------------------------------------
     # Playback Methods
@@ -1280,6 +1318,7 @@ class PieceBuilder:
         try:
             while handle.is_watching():
                 import time
+
                 time.sleep(0.1)
         except KeyboardInterrupt:
             print("\n[watch] Stopping...")
@@ -1336,9 +1375,7 @@ class _LoopingHandle:
                 break
 
             # Start playback
-            self._current_handle = self._backend.play(
-                self._events, self._tempo, self._instruments
-            )
+            self._current_handle = self._backend.play(self._events, self._tempo, self._instruments)
 
             # Wait for this iteration to complete
             self._current_handle.wait()

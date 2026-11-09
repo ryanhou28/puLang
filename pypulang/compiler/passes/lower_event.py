@@ -200,10 +200,22 @@ class LowerEventToDaw(ModulePass):
             clips, track_inexact, track_clipped = _clips(track, sections)
             inexact += track_inexact
             clipped += track_clipped
+            audio = []
+            for placed in track.audio():
+                clip = daw.AudioClipOp(
+                    loc_key(placed.location),
+                    placed.file.data,
+                    ticks(placed.start.data),
+                    ticks(placed.length.data) if placed.length is not None else None,
+                    placed.offset.value.data,
+                    placed.gain.value.data,
+                )
+                clip.location = placed.location
+                audio.append(clip)
             lowered = _track_with_rack(
                 track.track.data,
                 track.role.data,
-                [*clips, *_automations(track)],
+                [*clips, *audio, *_automations(track)],
                 racks.pop(track.track.data, None),
             )
             lowered.location = track.location

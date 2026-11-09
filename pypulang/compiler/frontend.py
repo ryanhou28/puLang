@@ -55,15 +55,29 @@ def _section_op(section: Section) -> intent.SectionOp:
         curve_op = intent.CurveOp(curve.track, curve.target, curve.points)
         curve_op.location = name_loc(f"{section.name}/{curve.track}/{curve.target}")
         curves.append(curve_op)
+    audio = []
+    for index, placed in enumerate(section.audio):
+        audio_op = intent.AudioOp(
+            placed.track, placed.file, placed.at, placed.length, placed.offset, placed.gain
+        )
+        audio_op.location = name_loc(f"{section.name}/{placed.track}/audio{index}")
+        audio.append(audio_op)
     op = intent.SectionOp(
-        section.name, section.bars, section.key, section.time_signature, [harmony, *tracks, *curves]
+        section.name,
+        section.bars,
+        section.key,
+        section.time_signature,
+        [harmony, *tracks, *curves, *audio],
     )
     op.location = name_loc(section.name)
     return op
 
 
 def _rack_op(rack: Rack) -> daw.RackOp:
-    ops: list = [daw.PluginOp(d.name, d.identifier, dict(d.params), d.patch) for d in rack.devices]
+    ops: list = [
+        daw.PluginOp(d.name, d.identifier, dict(d.params), d.patch, d.sounds or None)
+        for d in rack.devices
+    ]
     ops.extend(daw.SendOp(destination, gain) for destination, gain in rack.sends.items())
     op = daw.RackOp(rack.track, ops, rack.volume, rack.pan, rack.color)
     op.location = name_loc(f"rack/{rack.track}")
