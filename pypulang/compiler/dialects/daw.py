@@ -25,7 +25,7 @@ from xdsl.parser import Parser
 from xdsl.printer import Printer
 from xdsl.traits import NoTerminator
 
-from pypulang.compiler.dialects.mus import float_attr, to_attr
+from pypulang.compiler.dialects.mus import float_attr, from_attr, to_attr
 
 
 @irdl_op_definition
@@ -145,6 +145,9 @@ class TrackOp(IRDLOperation):
     def sends(self) -> list[SendOp]:
         return [op for op in self.body.block.ops if isinstance(op, SendOp)]
 
+    def audio_clips(self) -> list[AudioClipOp]:
+        return [op for op in self.body.block.ops if isinstance(op, AudioClipOp)]
+
 
 @irdl_op_definition
 class RackOp(IRDLOperation):
@@ -201,10 +204,18 @@ class PluginOp(IRDLOperation):
     identifier = prop_def(StringAttr)
     params = prop_def(DictionaryAttr)
     patch = opt_prop_def(StringAttr)
-    assembly_format = "$device `is` $identifier (`patch` $patch^)? `with` $params attr-dict"
+    sounds = opt_prop_def(ArrayAttr)
+    assembly_format = (
+        "$device `is` $identifier (`patch` $patch^)? (`sounds` $sounds^)? `with` $params attr-dict"
+    )
 
     def __init__(
-        self, device: str, identifier: str, params: dict[str, object], patch: str | None = None
+        self,
+        device: str,
+        identifier: str,
+        params: dict[str, object],
+        patch: str | None = None,
+        sounds: Sequence[dict[str, object]] | None = None,
     ):
         props: dict[str, Attribute] = {
             "device": StringAttr(device),
@@ -213,7 +224,13 @@ class PluginOp(IRDLOperation):
         }
         if patch is not None:
             props["patch"] = StringAttr(patch)
+        if sounds:
+            props["sounds"] = ArrayAttr([to_attr(dict(s)) for s in sounds])
         super().__init__(properties=props)
+
+    def sound_list(self) -> list[dict[str, object]]:
+        """A sampler's sounds: file, root, low, high, gain, pan, one_shot."""
+        return [from_attr(s) for s in self.sounds.data] if self.sounds is not None else []
 
 
 @irdl_op_definition
@@ -317,6 +334,48 @@ class AutomationOp(IRDLOperation):
 
 
 @irdl_op_definition
+class AudioClipOp(IRDLOperation):
+    """
+    An audio clip: a file on a track, in ticks. `key` names it across recompiles.
+
+    `length` absent means to the end of the file. `offset` is seconds into the
+    file and `gain` decibels. The file is a path relative to the song; it becomes
+    an asset in kaiDAW's media pool when it is sent.
+    """
+
+    name = "daw.audio"
+    key = prop_def(StringAttr)
+    file = prop_def(StringAttr)
+    start = prop_def(IntegerAttr)
+    length = opt_prop_def(IntegerAttr)
+    offset = prop_def(FloatAttr)
+    gain = prop_def(FloatAttr)
+    assembly_format = (
+        "$key $file `at` $start (`for` $length^)? `offset` $offset `gain` $gain attr-dict"
+    )
+
+    def __init__(
+        self,
+        key: str,
+        file: str,
+        start: int,
+        length: int | None = None,
+        offset: float = 0.0,
+        gain: float = 0.0,
+    ):
+        props: dict[str, Attribute] = {
+            "key": StringAttr(key),
+            "file": StringAttr(file),
+            "start": IntegerAttr(start, i64),
+            "offset": float_attr(offset),
+            "gain": float_attr(gain),
+        }
+        if length is not None:
+            props["length"] = IntegerAttr(length, i64)
+        super().__init__(properties=props)
+
+
+@irdl_op_definition
 class ControllerOp(IRDLOperation):
     """
     A MIDI controller lane in a clip: `pitchbend`, `pressure` or `cc0` to `cc127`.
@@ -382,6 +441,7 @@ DawDialect = Dialect(
         ClipOp,
         NoteOp,
         ControllerOp,
+        AudioClipOp,
         AutomationOp,
         SendOp,
     ],

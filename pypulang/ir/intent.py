@@ -480,6 +480,8 @@ class Device:
     identifier: str
     params: dict[str, float] = field(default_factory=dict)
     patch: str | None = None
+    # A sampler's sounds: {"file", "root", "low", "high", "gain", "pan", "one_shot"}
+    sounds: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "identifier": self.identifier, "params": self.params}
@@ -533,6 +535,28 @@ class Rack:
             color=d.get("color"),
             sends=d.get("sends", {}),
         )
+
+
+@dataclass
+class AudioPlacement:
+    """
+    An audio file played on a track during a section.
+
+    Attributes:
+        track: Track name
+        file: Path to the audio file, relative to the song
+        at: Beats from the section start
+        length: Beats, or None for the rest of the file
+        offset: Seconds into the file to start from
+        gain: Decibels
+    """
+
+    track: str
+    file: str
+    at: Fraction = Fraction(0)
+    length: Fraction | None = None
+    offset: float = 0.0
+    gain: float = 0.0
 
 
 @dataclass
@@ -593,6 +617,7 @@ class Section:
     harmony: Harmony = field(default_factory=Harmony)
     tracks: list[Track] = field(default_factory=list)
     curves: list[Curve] = field(default_factory=list)
+    audio: list[AudioPlacement] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {

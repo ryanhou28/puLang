@@ -61,10 +61,11 @@ class LowerScoreToEvent(ModulePass):
                     notes.append(lowered)
             notes.sort(key=lambda n: (n.start.data, n.pitch.value.data))
             curves = [o for o in part.body.block.ops if isinstance(o, event.CurveOp)]
-            for curve in curves:
-                part.body.block.detach_op(curve)
+            audio = [o for o in part.body.block.ops if isinstance(o, event.AudioOp)]
+            for carried in [*curves, *audio]:
+                part.body.block.detach_op(carried)
             track = event.TrackOp(
-                part.part.data, part.role.data, part.instrument.data, [*notes, *curves]
+                part.part.data, part.role.data, part.instrument.data, [*notes, *curves, *audio]
             )
             track.location = part.location
             ops.append(track)

@@ -36,6 +36,8 @@ class Lock:
     schemas: dict[str, dict[str, str]] = field(default_factory=dict)
     # Controller lanes last pushed, by "<clip key>/<controller>": [[tick, value], ...]
     controllers: dict[str, list[list[float]]] = field(default_factory=dict)
+    # Audio files imported into kaiDAW's pool, by absolute path: id, size, mtime
+    assets: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def notes_in(self, clip_key: str) -> dict[str, dict[str, Any]]:
         return {loc: n for loc, n in self.notes.items() if n["clip"] == clip_key}

@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote
 
 DEFAULT_PORT = 8899
 
@@ -21,6 +22,10 @@ class KaidawError(RuntimeError):
 
 class Transport(Protocol):
     def request(self, method: str, path: str, body: Any = None) -> Any: ...
+
+    def upload(self, file: Path, path: str) -> Any:
+        """POST a file's bytes as the body."""
+        ...
 
 
 class HttpTransport:
@@ -43,6 +48,22 @@ class HttpTransport:
                 raw = response.read()
         except urllib.error.HTTPError as error:
             # A rejected command arrives as a 4xx with the reason in its body.
+            raw = error.read()
+        except OSError as error:
+            raise KaidawError(f"Cannot reach kaiDAW at {self.base}: {error}") from error
+        return json.loads(raw) if raw else {}
+
+    def upload(self, file: Path, path: str) -> Any:
+        request = urllib.request.Request(
+            self.base + path,
+            data=Path(file).read_bytes(),
+            method="POST",
+            headers={"content-type": "application/octet-stream"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as error:
             raw = error.read()
         except OSError as error:
             raise KaidawError(f"Cannot reach kaiDAW at {self.base}: {error}") from error
@@ -120,6 +141,28 @@ class WslTransport:
                 payload.unlink(missing_ok=True)
         return json.loads(raw) if raw else {}
 
+    def upload(self, file: Path, path: str) -> Any:
+        """Copy the file where Windows can read it, then POST it from there."""
+        self.share_wsl.mkdir(parents=True, exist_ok=True)
+        name = f"pulang-upload-{os.getpid()}{Path(file).suffix}"
+        copy = self.share_wsl / name
+        copy.write_bytes(Path(file).read_bytes())
+        try:
+            raw = self._curl(
+                [
+                    "-X",
+                    "POST",
+                    f"http://127.0.0.1:{self.port}{path}",
+                    "-H",
+                    "content-type: application/octet-stream",
+                    "--data-binary",
+                    f"@{self.share_win}\\{name}",
+                ]
+            )
+        finally:
+            copy.unlink(missing_ok=True)
+        return json.loads(raw) if raw else {}
+
 
 def _is_wsl() -> bool:
     try:
@@ -178,6 +221,24 @@ class KaidawClient:
                 f"{result.get('status')}: {result.get('errors') or result.get('scopeViolations')}"
             )
         return result
+
+    def import_asset(self, file: Path) -> dict[str, Any]:
+        """
+        Bring an audio file into the project's media pool.
+
+        Returns:
+            The asset: id, name, seconds, channels, sampleRate
+
+        Raises:
+            KaidawError: If the server cannot read the file as audio
+        """
+        result = self.transport.upload(Path(file), f"/assets?name={quote(Path(file).name)}")
+        if not result.get("ok"):
+            raise KaidawError(f"could not import {file}: {result.get('errors')}")
+        return result["asset"]
+
+    def assets(self) -> list[dict[str, Any]]:
+        return self.transport.request("GET", "/assets").get("assets", [])
 
     def plugin_state(self, plugin_id: str) -> str:
         """

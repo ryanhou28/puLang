@@ -12,8 +12,15 @@ from collections.abc import Sequence
 from fractions import Fraction
 
 from xdsl.dialects.builtin import ArrayAttr, FloatAttr, IntegerAttr, StringAttr, i64
-from xdsl.ir import Block, Dialect, Region
-from xdsl.irdl import IRDLOperation, irdl_op_definition, prop_def, region_def, traits_def
+from xdsl.ir import Attribute, Block, Dialect, Region
+from xdsl.irdl import (
+    IRDLOperation,
+    irdl_op_definition,
+    opt_prop_def,
+    prop_def,
+    region_def,
+    traits_def,
+)
 from xdsl.parser import Parser
 from xdsl.printer import Printer
 from xdsl.traits import NoTerminator
@@ -111,6 +118,9 @@ class TrackOp(IRDLOperation):
     def curves(self) -> list[CurveOp]:
         return [op for op in self.body.block.ops if isinstance(op, CurveOp)]
 
+    def audio(self) -> list[AudioOp]:
+        return [op for op in self.body.block.ops if isinstance(op, AudioOp)]
+
 
 @irdl_op_definition
 class NoteOp(IRDLOperation):
@@ -179,4 +189,42 @@ class CurveOp(IRDLOperation):
         return list(zip(values[0::2], values[1::2], strict=True))
 
 
-EventDialect = Dialect("event", [StreamOp, TempoOp, SectionOp, TrackOp, NoteOp, CurveOp], [])
+@irdl_op_definition
+class AudioOp(IRDLOperation):
+    """
+    An audio file played on a track from `start`, in beats from the piece's start.
+
+    `file` is a path to an audio file, relative to the song. `offset` is seconds into
+    the file and `gain` decibels; `length` is absent for "to the end of the file".
+    """
+
+    name = "event.audio"
+    file = prop_def(StringAttr)
+    start = prop_def(RationalAttr)
+    length = opt_prop_def(RationalAttr)
+    offset = prop_def(FloatAttr)
+    gain = prop_def(FloatAttr)
+    assembly_format = "$file `at` $start (`for` $length^)? `offset` $offset `gain` $gain attr-dict"
+
+    def __init__(
+        self,
+        file: str,
+        start: Fraction,
+        length: Fraction | None = None,
+        offset: float = 0.0,
+        gain: float = 0.0,
+    ):
+        props: dict[str, Attribute] = {
+            "file": StringAttr(file),
+            "start": RationalAttr(Fraction(start)),
+            "offset": float_attr(offset),
+            "gain": float_attr(gain),
+        }
+        if length is not None:
+            props["length"] = RationalAttr(Fraction(length))
+        super().__init__(properties=props)
+
+
+EventDialect = Dialect(
+    "event", [StreamOp, TempoOp, SectionOp, TrackOp, NoteOp, CurveOp, AudioOp], []
+)

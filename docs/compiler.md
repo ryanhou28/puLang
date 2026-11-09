@@ -229,6 +229,34 @@ the hand edits it reproduces exactly and how many notes nobody touched it would 
 A chord the edited notes spell is offered together with the voicing as played, because a new
 chord on its own would be voiced afresh: the pair keeps the notes and tells the other parts
 what the harmony now is. Keeping a reading drops the note edits it explains.
+## Audio and samples
+
+A section can play an audio file on a track, and a rack can be a sampler with files on its
+keys:
+
+```python
+from pypulang import *
+from pypulang.sounds import sampler
+
+with piece(tempo=140, key="F minor", title="Samples") as song:
+    song.rack("drums", sampler("kit", {36: "samples/kick.wav", 38: "samples/snare.wav"}))
+    drop = song.section("drop", bars=4)
+    drop.harmony(i, VI)
+    drop.track("drums", role=Role.RHYTHM).pattern(grid(cell="x...o...x.x.o...", pitch=36))
+    drop.audio("vox", "samples/chop.wav", at=1, length=1 / 4, gain_db=-3)
+```
+
+`audio` places a file `at` bars from the section start, for `length` bars or to the end of
+the file, from `offset` seconds into it. It lowers like automation does, once per occurrence:
+`intent.audio` in the section, `event.audio` at an absolute beat, and `daw.audio` with a key
+such as `drop#2/vox/audio0`, so each occurrence is its own clip in the DAW. A sampler's sounds
+ride on its `daw.plugin`. A bare path plays on its key alone and to its end, which is what a
+drum pad is; a dict sets `root`, `low`, `high`, `gain`, `pan` or `one_shot`.
+
+Push imports each file into kaiDAW's media pool once, and again only if it changes on disk
+or the server has lost it. Audio clips follow the rule notes and parameters follow: one moved
+or deleted in the DAW stays that way, and one is changed only when its source changes.
+Paths are relative to the song file. kaiDAW reads WAV, AIFF and FLAC.
 
 ## Sound
 
@@ -297,6 +325,7 @@ What exists and is tested:
 | Performance | Swing, humanize, accent, pump, bend |
 | kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
 | Editing above the notes | Intent and score edits kept at their level; `pulang serve` traces a DAW note up every level; hand edits read back as chords, voicings, octaves, velocity and mutes, each checked by lowering |
+| Audio | Files on tracks per section, and samplers with files on keys, imported into kaiDAW's pool |
 | Review | Melody against harmony, ranges, parallels |
 
 Not built, and described elsewhere in these docs:

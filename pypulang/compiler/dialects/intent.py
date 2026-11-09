@@ -142,6 +142,9 @@ class SectionOp(IRDLOperation):
     def curves(self) -> list[CurveOp]:
         return [op for op in self.body.block.ops if isinstance(op, CurveOp)]
 
+    def audio(self) -> list[AudioOp]:
+        return [op for op in self.body.block.ops if isinstance(op, AudioOp)]
+
 
 @irdl_op_definition
 class HarmonyOp(IRDLOperation):
@@ -307,8 +310,49 @@ class CurveOp(IRDLOperation):
         return list(zip(values[0::2], values[1::2], strict=True))
 
 
+@irdl_op_definition
+class AudioOp(IRDLOperation):
+    """
+    An audio file played on a track during a section, `at` beats from its start.
+
+    `file` is a path to an audio file, relative to the song. `offset` is seconds into
+    the file and `gain` decibels; `length` is absent for "to the end of the file".
+    """
+
+    name = "intent.audio"
+    track = prop_def(StringAttr)
+    file = prop_def(StringAttr)
+    at = prop_def(RationalAttr)
+    length = opt_prop_def(RationalAttr)
+    offset = prop_def(FloatAttr)
+    gain = prop_def(FloatAttr)
+    assembly_format = (
+        "$track $file `at` $at (`for` $length^)? `offset` $offset `gain` $gain attr-dict"
+    )
+
+    def __init__(
+        self,
+        track: str,
+        file: str,
+        at: Fraction,
+        length: Fraction | None = None,
+        offset: float = 0.0,
+        gain: float = 0.0,
+    ):
+        props: dict[str, Attribute] = {
+            "track": StringAttr(track),
+            "file": StringAttr(file),
+            "at": RationalAttr(Fraction(at)),
+            "offset": float_attr(offset),
+            "gain": float_attr(gain),
+        }
+        if length is not None:
+            props["length"] = RationalAttr(Fraction(length))
+        super().__init__(properties=props)
+
+
 IntentDialect = Dialect(
     "intent",
-    [PieceOp, SectionOp, HarmonyOp, TrackOp, PatternOp, NotesOp, NoteOp, CurveOp],
+    [PieceOp, SectionOp, HarmonyOp, TrackOp, PatternOp, NotesOp, NoteOp, CurveOp, AudioOp],
     [HarmonyType],
 )

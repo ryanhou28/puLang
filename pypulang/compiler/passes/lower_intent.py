@@ -17,7 +17,7 @@ from xdsl.passes import ModulePass
 
 from pypulang.compiler.dialects import daw, event, intent, score
 from pypulang.compiler.dialects.mus import from_attr
-from pypulang.compiler.locs import in_section
+from pypulang.compiler.locs import in_section, loc_key
 from pypulang.compiler.notes import NoteRecord, add_notes
 from pypulang.compiler.timeline import Timeline
 from pypulang.context_patterns import CONTEXT_PATTERNS
@@ -204,6 +204,25 @@ class LowerIntentToScore(ModulePass):
                     curve.target.data, [(start + t, v) for t, v in curve.point_list()]
                 )
                 lowered.location = curve.location
+                parts[name].body.block.add_op(lowered)
+            # Audio rides with the part like a curve does, one per occurrence,
+            # located at its occurrence so each is its own clip in the DAW.
+            for placed in occurrence.op.audio():
+                name = placed.track.data
+                if name not in parts:
+                    parts[name] = score.PartOp(name, "harmony", "", [])
+                lowered = event.AudioOp(
+                    placed.file.data,
+                    occurrence.marker.start.data + placed.at.data,
+                    placed.length.data if placed.length is not None else None,
+                    placed.offset.value.data,
+                    placed.gain.value.data,
+                )
+                lowered.location = in_section(
+                    loc_key(placed.location),
+                    occurrence.marker.section.data,
+                    occurrence.marker.occurrence.value.data,
+                )
                 parts[name].body.block.add_op(lowered)
 
         racks = [o for o in piece.body.block.ops if isinstance(o, daw.RackOp)]
