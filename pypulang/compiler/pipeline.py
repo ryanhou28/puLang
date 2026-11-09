@@ -19,6 +19,7 @@ from pypulang.compiler.dialects.event import EventDialect
 from pypulang.compiler.dialects.intent import IntentDialect
 from pypulang.compiler.dialects.mus import Mus
 from pypulang.compiler.dialects.score import ScoreDialect
+from pypulang.compiler.edits import ApplyIntentEdits, ApplyScoreEdits, Edit, EditReport
 from pypulang.compiler.frontend import import_piece
 from pypulang.compiler.passes.lower_event import LowerEventToDaw, warnings_of
 from pypulang.compiler.passes.lower_intent import LowerIntentToScore
@@ -58,6 +59,7 @@ class CompileResult:
 
     stages: dict[str, ModuleOp] = field(default_factory=dict)
     trace: list[tuple[str, ModuleOp]] = field(default_factory=list)
+    edits: EditReport = field(default_factory=EditReport)
 
     @property
     def daw(self) -> ModuleOp:
@@ -66,7 +68,7 @@ class CompileResult:
     @property
     def warnings(self) -> list[str]:
         last = next(reversed(self.stages.values()))
-        return warnings_of(last)
+        return [*warnings_of(last), *self.edits.lines()]
 
 
 def compile_piece(
@@ -77,6 +79,7 @@ def compile_piece(
     event_passes: Sequence[ModulePass] = (),
     daw_passes: Sequence[ModulePass] = (),
     keep_trace: bool = False,
+    edits: Sequence[Edit] = (),
 ) -> CompileResult:
     """
     Compile a piece down to `until`.
@@ -89,6 +92,9 @@ def compile_piece(
         event_passes: Run on the event stream
         daw_passes: Run on the finished project
         keep_trace: Keep a copy of the module after every single pass
+        edits: Edits made above the notes, applied where they were made: intent
+            edits after `intent_passes`, score chords before voice leading, exact
+            voicings after it
 
     Returns:
         A CompileResult holding a copy of the module at each stage reached
@@ -108,11 +114,24 @@ def compile_piece(
             if keep_trace:
                 result.trace.append((one.name, module.clone()))
 
+    edits = tuple(edits)
+    # The edit passes run only when there are edits, so a song without any traces
+    # exactly as it did before edits existed.
+    intent_edits = [ApplyIntentEdits(edits, result.edits)] if edits else []
+    score_chords = [ApplyScoreEdits(edits, ("chord",), result.edits)] if edits else []
+    score_pitches = [ApplyScoreEdits(edits, ("pitches",), result.edits)] if edits else []
     plan: list[tuple[str, list[ModulePass]]] = [
-        ("intent", list(intent_passes)),
+        ("intent", [*intent_passes, *intent_edits]),
         (
             "score",
-            [LowerIntentToScore(), VoiceLead(), *score_passes, RealizePatterns()],
+            [
+                LowerIntentToScore(),
+                *score_chords,
+                VoiceLead(),
+                *score_pitches,
+                *score_passes,
+                RealizePatterns(),
+            ],
         ),
         ("event", [LowerScoreToEvent(), *event_passes]),
         ("daw", [LowerEventToDaw(), *daw_passes]),

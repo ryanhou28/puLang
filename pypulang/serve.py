@@ -1,0 +1,496 @@
+"""
+`pulang serve`: the song's IR beside kaiDAW, and edits at every level.
+
+kaiDAW shows this page in its source panel, passing the selected clip and notes.
+The page shows what produced them, level by level, with the edits each level can
+take: a chord or a track's settings in the intent IR, one occurrence's chord or a
+chord's exact voicing in the score IR. An edit is kept in the song's overrides at
+the level it was made, then the song is recompiled and pushed, so kaiDAW shows the
+result a moment later. Nothing here is part of kaiDAW's protocol: kaiDAW passes ids
+and shows a page, and the music stays on this side (kaiDAW blueprint §3.10).
+"""
+
+from __future__ import annotations
+
+import html
+import json
+import threading
+import traceback
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
+
+from pypulang import lift
+from pypulang.backends.kaidaw import KaidawClient, KaidawError, SongState, pull, push
+from pypulang.compiler.edits import Edit, current_value
+from pypulang.compiler.passes.voice_lead import parse_spec
+from pypulang.compiler.spelling import midi_of, spell
+from pypulang.context_patterns import CONTEXT_PATTERNS
+from pypulang.harmony import parse_chord_symbol
+from pypulang.inspector import ClipView, Model, NoteChain
+from pypulang.ir.intent import Key
+from pypulang.patterns import PATTERN_REGISTRY
+from pypulang.songfile import load_song
+
+DEFAULT_LISTEN = 8950
+
+
+class Companion:
+    """One song, compiled on demand, and the edits made through the page."""
+
+    def __init__(self, song_path: str | Path, client: KaidawClient | None):
+        self.path = Path(song_path)
+        self.state = SongState.beside(self.path)
+        self.client = client
+        self.guard = threading.RLock()
+        self.message = ""
+        self._stamp: tuple[float, ...] | None = None
+        self._model: Model | None = None
+        self._title = ""
+        self.suggestions: dict[str, list[lift.Suggestion]] = {}
+
+    def _files_stamp(self) -> tuple[float, ...]:
+        files = [
+            self.path,
+            self.state.directory / "overrides.json",
+            self.state.directory / "lock.json",
+        ]
+        return tuple(f.stat().st_mtime if f.exists() else 0.0 for f in files)
+
+    def model(self) -> Model:
+        with self.guard:
+            stamp = self._files_stamp()
+            if self._model is None or stamp != self._stamp:
+                song = load_song(self.path)
+                result = song.compile(keep_trace=True)
+                self._title = self.path.stem
+                self._model = Model(result, self.state.load_lock(), self.state.load_overrides())
+                self._stamp = stamp
+            return self._model
+
+    # -- edits --------------------------------------------------------------------------
+
+    def edit(self, level: str, target: str, field: str, text: str) -> str:
+        with self.guard:
+            model = self.model()
+            overrides = self.state.load_overrides()
+            edit = Edit(level, target, field, None)
+            edit.value = self._parse(model, edit, text)
+            existing = {e.key: e for e in overrides.edit_list()}
+            if edit.key in existing:
+                edit.base = existing[edit.key].base
+            else:
+                edit.base = self._base(model, edit)
+            if edit.value == edit.base:
+                overrides.drop_edit(edit.key)
+                note = f"{edit.key} is back to what the source says"
+            else:
+                overrides.put_edit(edit)
+                note = f"{edit.key}: {edit.base!r} -> {edit.value!r}"
+            self.state.save_overrides(overrides)
+            return note + self.push()
+
+    def drop(self, key: str) -> str:
+        with self.guard:
+            overrides = self.state.load_overrides()
+            if not overrides.drop_edit(key):
+                return f"no edit {key}"
+            self.state.save_overrides(overrides)
+            return f"dropped {key}" + self.push()
+
+    def read_edits(self, clip_key: str) -> str:
+        """Capture DAW edits, then find what they might mean at a higher level."""
+        with self.guard:
+            if self.client is not None:
+                pull(self.client, self.state)
+            model = self.model()
+            found = lift.suggest(load_song(self.path), model, clip_key)
+            self.suggestions[clip_key] = found
+            edited = sum(1 for loc in model.overrides.notes if loc.startswith(clip_key + "/"))
+            if not edited:
+                return f"no hand edits in {clip_key}"
+            return (
+                f"{edited} hand edit(s) in {clip_key}; {len(found)} reading(s) explain some of them"
+            )
+
+    def accept(self, clip_key: str, index: int) -> str:
+        with self.guard:
+            suggestion = self.suggestions.get(clip_key, [])[index]
+            overrides = lift.accept(load_song(self.path), self.state.load_overrides(), suggestion)
+            self.state.save_overrides(overrides)
+            self.suggestions.pop(clip_key, None)
+            return f"kept {suggestion.id}" + self.push()
+
+    def push(self) -> str:
+        """Recompile and send the difference to kaiDAW, if there is one."""
+        if self.client is None:
+            return " (no kaiDAW connected: run with --port to push)"
+        song = load_song(self.path)
+        result = song.compile()
+        try:
+            report = push(result.daw, self.client, self.state)
+        except KaidawError as error:
+            return f" — push failed: {error}"
+        self._stamp = None
+        return f" — pushed: {report.summary().splitlines()[0]}"
+
+    @staticmethod
+    def _parse(model: Model, edit: Edit, text: str) -> Any:
+        text = text.strip()
+        if edit.field == "chord":
+            parse_chord_symbol(text, Key("C", "major"))  # the symbol must read; its key comes later
+            return text
+        if edit.field == "voicing":
+            if text:
+                parse_spec(text)
+            return text or None
+        if edit.field in ("octave", "velocity"):
+            return int(text)
+        if edit.field == "muted":
+            return text.lower() in ("1", "on", "true", "yes")
+        if edit.field == "pattern":
+            kind, _, params = text.partition(" ")
+            if kind not in PATTERN_REGISTRY and kind not in CONTEXT_PATTERNS:
+                raise ValueError(f"no pattern {kind!r}")
+            return {"kind": kind, "params": json.loads(params) if params.strip() else {}}
+        if edit.field == "pitches":
+            slot = next(
+                (s for t in model.voiced.parts() for s in t.slots() if _slot_key(s) == edit.target),
+                None,
+            )
+            octave = slot.octave.value.data if slot is not None else 0
+            names = text.replace(",", " ").split()
+            return [(int(n) if n.isdigit() else midi_of(n)) - 12 * octave for n in names]
+        raise ValueError(f"cannot edit {edit.field!r}")
+
+    @staticmethod
+    def _base(model: Model, edit: Edit) -> Any:
+        if edit.level == "intent":
+            return current_value(model.result.stages["intent"], edit)[1]
+        if edit.field == "chord":
+            name, _, rest = edit.target.partition("/")
+            section, _, occurrence = name.partition("#")
+            where = rest.removeprefix("harmony@")
+            return next(
+                (c.symbol for c in model.chords(section, int(occurrence)) if c.position == where),
+                None,
+            )
+        slot = next(
+            (s for t in model.voiced.parts() for s in t.slots() if _slot_key(s) == edit.target),
+            None,
+        )
+        return slot.pitch_list() if slot is not None else None
+
+    # -- the page -----------------------------------------------------------------------
+
+    def page(self, query: dict[str, str]) -> str:
+        model = self.model()
+        clip_id = query.get("clipId", "")
+        note_ids = [n for n in query.get("noteIds", "").split(",") if n]
+        if not clip_id and note_ids:
+            loc = model.by_note_id.get(note_ids[0], "")
+            entry = model.lock.notes.get(loc)
+            clip_id = model.lock.clips.get(entry["clip"], {}).get("id", "") if entry else ""
+        view = model.clip(clip_id, note_ids) if clip_id else None
+        back = "/inspect?" + urlencode({"clipId": clip_id, "noteIds": ",".join(note_ids)})
+        body = [f"<h1>{_e(self._title)}</h1>"]
+        if self.message:
+            body.append(f'<p class="msg">{_e(self.message)}</p>')
+            self.message = ""
+        if view is None:
+            body.append(
+                '<p class="dim">Select a clip in kaiDAW, or notes in its piano roll, to see '
+                "what produced them.</p>"
+                if not clip_id
+                else f'<p class="dim">Clip {_e(clip_id)} did not come from this song.</p>'
+            )
+        else:
+            body.extend(_clip_html(view, model, back))
+            body.extend(_lift_html(view, model, self.suggestions.get(view.key), back))
+        body.extend(_edits_html(model, back))
+        return _PAGE.replace("{body}", "\n".join(body))
+
+
+def _slot_key(slot: Any) -> str:
+    from pypulang.compiler.locs import loc_key
+
+    return loc_key(slot.location)
+
+
+def _e(value: Any) -> str:
+    return html.escape(str(value))
+
+
+def _form(level: str, target: str, field: str, value: Any, back: str, width: int = 10) -> str:
+    shown = "" if value is None else value
+    if isinstance(shown, bool):
+        shown = "on" if shown else "off"
+    return (
+        f'<form method="post" action="/edit" class="inline">'
+        f'<input type="hidden" name="level" value="{_e(level)}">'
+        f'<input type="hidden" name="target" value="{_e(target)}">'
+        f'<input type="hidden" name="field" value="{_e(field)}">'
+        f'<input type="hidden" name="back" value="{_e(back)}">'
+        f'<input name="value" value="{_e(shown)}" size="{width}" title="Enter to apply">'
+        f"</form>"
+    )
+
+
+def _note_row(chain: NoteChain, key: Key) -> str:
+    daw = chain.daw
+    daw_text = f"{spell(daw[0], key)} @ {daw[1]} for {daw[2]}, vel {daw[3]}" if daw else "—"
+    event_text = (
+        f"{spell(chain.event[0], key)} @ beat {chain.event[1]} for {chain.event[2]}, vel {chain.event[3]}"
+        if chain.event
+        else "—"
+    )
+    edited = ""
+    if chain.override:
+        edited = (
+            '<span class="tag">deleted in the DAW</span>'
+            if chain.override.get("deleted")
+            else f'<span class="tag">moved in the DAW to {_e(chain.override["note"])}</span>'
+        )
+    return (
+        f"<tr><td>{_e(chain.where)}</td><td>{_e(daw_text)}</td><td>{_e(event_text)}</td>"
+        f"<td>{_e(chain.score or '—')}</td>"
+        f"<td>{_e(chain.slot.target if chain.slot else '—')}</td>"
+        f"<td>{_e(chain.chord.symbol if chain.chord else '—')}</td><td>{edited}</td></tr>"
+    )
+
+
+def _clip_html(view: ClipView, model: Model, back: str) -> list[str]:
+    key = Key(*view.key_name.split(" ")) if view.key_name else Key("C", "major")
+    out = [
+        f'<p class="where"><b>{_e(view.tag)}</b> · {_e(view.track)} · {_e(view.key_name)} · '
+        f"{_e(view.meter)} · {view.bars} bars</p>"
+    ]
+    if view.notes:
+        out.append('<h2>Selected notes <span class="lvl">daw → event → score</span></h2>')
+        out.append(
+            "<table><tr><th>place</th><th>in kaiDAW (ticks)</th><th>event</th><th>score</th>"
+            "<th>slot</th><th>chord</th><th></th></tr>"
+        )
+        out.extend(_note_row(n, key) for n in view.notes)
+        out.append("</table>")
+
+    wanted = {n.slot.target for n in view.notes if n.slot} or {s.target for s in view.slots}
+    slots = [s for s in view.slots if s.target in wanted]
+    if slots:
+        out.append(
+            f'<h2>Voicings <span class="lvl">score · {_e(view.tag)} only</span></h2>'
+            '<p class="dim">The exact notes of a chord in this part. Every hit of the chord '
+            "plays them.</p><table><tr><th>slot</th><th>chord</th><th>pattern</th><th>notes</th></tr>"
+        )
+        for slot in slots:
+            out.append(
+                f"<tr><td>{_e(slot.target)}</td><td>{_e(slot.chord)}</td><td>{_e(slot.kind)}</td>"
+                f"<td>{_form('score', slot.target, 'pitches', ' '.join(spell(p, key) for p in slot.pitches), back, 24)}</td></tr>"
+            )
+        out.append("</table>")
+
+    if view.chords:
+        out.append(
+            f'<h2>Chords <span class="lvl">score · {_e(view.tag)} only</span> and '
+            f'<span class="lvl">intent · every {_e(view.section)}</span></h2>'
+            "<table><tr><th>at</th><th>this time only</th><th>every time</th></tr>"
+        )
+        for chord in view.chords:
+            out.append(
+                f"<tr><td>{_e(chord.position)}</td>"
+                f"<td>{_form('score', chord.score_target(view.tag), 'chord', chord.symbol, back)}</td>"
+                f"<td>{_form('intent', chord.intent_target(view.section), 'chord', chord.written, back)}</td></tr>"
+            )
+        out.append("</table>")
+
+    track = view.track_info
+    if track is not None:
+        out.append(
+            f'<h2>The {_e(view.track)} part <span class="lvl">intent · every {_e(view.section)}</span></h2>'
+            "<table>"
+        )
+        for name, value in track.settings.items():
+            if name == "pattern":
+                text = value["kind"] + (
+                    " " + json.dumps(value["params"]) if value["params"] else ""
+                )
+                hint = "a pattern name, optionally followed by its parameters as JSON"
+            else:
+                text, hint = (
+                    value,
+                    {
+                        "voicing": "rootless(52,72), drop2, close… or empty for none",
+                        "octave": "octaves up or down",
+                        "velocity": "1–127",
+                        "muted": "on or off",
+                    }[name],
+                )
+            out.append(
+                f"<tr><td>{_e(name)}</td><td>{_form('intent', track.target, name, text, back, 28)}</td>"
+                f'<td class="dim">{_e(hint)}</td></tr>'
+            )
+        out.append("</table>")
+    return out
+
+
+def _lift_html(
+    view: ClipView, model: Model, found: list[lift.Suggestion] | None, back: str
+) -> list[str]:
+    edited = [loc for loc in model.overrides.notes if loc.startswith(view.key + "/")]
+    out = [
+        '<h2>Hand edits in this clip <span class="lvl">daw → higher</span></h2>',
+        f'<p class="dim">{len(edited)} note edit(s) made in kaiDAW are kept here. Reading them '
+        "recompiles the song once per guess, so it takes a few seconds.</p>",
+        f'<form method="post" action="/lift/find" class="inline">'
+        f'<input type="hidden" name="clip" value="{_e(view.key)}">'
+        f'<input type="hidden" name="back" value="{_e(back)}">'
+        f"<button>read my edits</button></form>",
+    ]
+    if found is None:
+        return out
+    if not found:
+        out.append('<p class="dim">No higher reading explains them; they stay note edits.</p>')
+        return out
+    out.append(
+        "<table><tr><th>reading</th><th>edits</th><th>explains</th><th>also changes</th><th></th></tr>"
+    )
+    for index, suggestion in enumerate(found):
+        edits = "<br>".join(_e(f"{e.key} → {e.value}") for e in suggestion.edits)
+        out.append(
+            f"<tr><td>{_e(suggestion.reason)}</td><td>{edits}</td>"
+            f"<td>{len(suggestion.explains)} of {suggestion.in_scope}</td>"
+            f"<td>{suggestion.disturbs} untouched note(s)</td>"
+            f'<td><form method="post" action="/lift/accept" class="inline">'
+            f'<input type="hidden" name="clip" value="{_e(view.key)}">'
+            f'<input type="hidden" name="index" value="{index}">'
+            f'<input type="hidden" name="back" value="{_e(back)}">'
+            f"<button>keep this</button></form></td></tr>"
+        )
+    out.append("</table>")
+    return out
+
+
+def _edits_html(model: Model, back: str) -> list[str]:
+    edits = model.overrides.edit_list()
+    report = model.result.edits
+    out = ["<h2>Edits above the notes</h2>"]
+    if not edits:
+        out.append(
+            '<p class="dim">None yet. Edits made here are kept in the song\'s overrides.</p>'
+        )
+    else:
+        out.append("<table>")
+        for edit in edits:
+            status = "applied"
+            if any(s.startswith(edit.key) for s in report.stale):
+                status = "stale — the source changed under it"
+            if any(s.startswith(edit.key) for s in report.orphaned):
+                status = "orphaned — the source no longer has this place"
+            out.append(
+                f"<tr><td>{_e(edit.key)}</td><td>{_e(edit.base)} → {_e(edit.value)}</td>"
+                f'<td class="dim">{_e(status)}</td><td><form method="post" action="/drop" class="inline">'
+                f'<input type="hidden" name="key" value="{_e(edit.key)}">'
+                f'<input type="hidden" name="back" value="{_e(back)}">'
+                f'<button title="Go back to what the source says">drop</button></form></td></tr>'
+            )
+        out.append("</table>")
+    return out
+
+
+_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8"><title>puLang source</title>
+<style>
+:root { color-scheme: dark; --ink:#d8dde6; --dim:#7d8594; --line:#2a2f3a; --panel:#161a21;
+        --accent:#5ab0ff; --warm:#f2b25c; }
+body { margin:0; padding:10px 14px; background:#0f1217; color:var(--ink);
+       font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+h1 { font-size:13px; margin:0 0 4px; color:var(--accent); font-weight:600; }
+h2 { font-size:12px; margin:14px 0 4px; font-weight:600; }
+.lvl { font-weight:400; color:#0f1217; background:var(--warm); border-radius:2px; padding:0 4px; }
+.dim { color:var(--dim); }
+.where { margin:0 0 6px; }
+.msg { background:#1d2a1d; border:1px solid #2f4a2f; padding:4px 8px; border-radius:3px; }
+.tag { color:#0f1217; background:#e7b0ff; border-radius:2px; padding:0 4px; }
+table { border-collapse:collapse; }
+td, th { border-bottom:1px solid var(--line); padding:2px 8px 2px 0; text-align:left;
+         vertical-align:middle; }
+th { color:var(--dim); font-weight:400; }
+form.inline { display:inline; margin:0; }
+input, button { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+                border-radius:3px; font:inherit; padding:1px 5px; }
+input:focus { border-color:var(--accent); outline:none; }
+button { cursor:pointer; } button:hover { border-color:var(--accent); }
+</style></head><body>
+{body}
+</body></html>
+"""
+
+
+class _Handler(BaseHTTPRequestHandler):
+    companion: Companion
+
+    def log_message(self, fmt: str, *args: Any) -> None:  # quiet
+        return
+
+    def _send(self, status: int, body: str, kind: str = "text/html; charset=utf-8") -> None:
+        data = body.encode()
+        self.send_response(status)
+        self.send_header("content-type", kind)
+        self.send_header("content-length", str(len(data)))
+        self.send_header("cache-control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        url = urlparse(self.path)
+        query = {k: v[0] for k, v in parse_qs(url.query).items()}
+        try:
+            if url.path in ("/", "/inspect"):
+                self._send(200, self.companion.page(query))
+            elif url.path == "/health":
+                self._send(
+                    200,
+                    json.dumps({"ok": True, "song": str(self.companion.path)}),
+                    "application/json",
+                )
+            else:
+                self._send(404, "not found", "text/plain")
+        except Exception:  # noqa: BLE001 — a page that says what broke beats a dead socket
+            self._send(500, f"<pre>{_e(traceback.format_exc())}</pre>")
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("content-length", 0))
+        form = {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode()).items()}
+        back = form.get("back", "/inspect")
+        companion = self.companion
+        try:
+            if self.path == "/edit":
+                companion.message = companion.edit(
+                    form["level"], form["target"], form["field"], form.get("value", "")
+                )
+            elif self.path == "/drop":
+                companion.message = companion.drop(form["key"])
+            elif self.path == "/lift/find":
+                companion.message = companion.read_edits(form["clip"])
+            elif self.path == "/lift/accept":
+                companion.message = companion.accept(form["clip"], int(form["index"]))
+            else:
+                self._send(404, "not found", "text/plain")
+                return
+        except (ValueError, KeyError, IndexError) as error:
+            companion.message = f"Not applied: {error}"
+        self.send_response(303)
+        self.send_header("location", back)
+        self.end_headers()
+
+
+def serve(song: str | Path, client: KaidawClient | None, listen: int = DEFAULT_LISTEN) -> None:
+    """Serve the page until interrupted."""
+    handler = type("Handler", (_Handler,), {"companion": Companion(song, client)})
+    server = ThreadingHTTPServer(("127.0.0.1", listen), handler)
+    print(f"puLang source panel on http://127.0.0.1:{listen} — set it in kaiDAW's source tab")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass

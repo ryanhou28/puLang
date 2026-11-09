@@ -196,6 +196,40 @@ On Slow Orbit, moving a note, deleting one, changing a fader and adding a delay,
 one chord of the head in the source, updated 85 notes and left 3,495 alone. All four hand
 edits survived and the deleted note was reported as stale.
 
+## Editing above the notes
+
+A note moved in the DAW is a note edit. Some edits mean more than their notes: the chord a
+section plays, the voicing of one chord, a part's octave. Those are kept at the level they
+were made at, as edits of the IR, and applied by a pass when the song compiles:
+
+| Level | Target | Fields | Reaches |
+|---|---|---|---|
+| intent | `verse/harmony@3+0` (the chord starting at bar 3, beat 0) | `chord` | every occurrence of the section |
+| intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern` | every occurrence |
+| score | `verse#2/harmony@3+0` | `chord` | the second verse only; voiced in context |
+| score | `verse#2/keys/c4` | `pitches` | the exact notes of one chord in one part |
+
+They live in `overrides.json` beside the note edits, so a song is still its source plus its
+overrides, and `pulang ir` shows them applied. A chord changed at the score level is voiced
+afresh by voice leading and every part follows it, so the bass plays the new root. Like a
+note edit, an edit made when the source said one thing and applied after it changed is
+reported as stale, and one whose place no longer exists as orphaned. `pulang edits` lists
+them as `level:target:field`, and `pulang drop` takes that name.
+
+`pulang serve song.py` serves a page that kaiDAW shows in its source tab. Select a clip, or
+notes in the piano roll, and it shows what produced them at every level, from the note in
+kaiDAW through the event and score notes to the chord slot, the chord and the section's
+track settings, each with the edits that level takes. An edit is recompiled and pushed at
+once.
+
+The page can also read hand edits made in kaiDAW. Each reading is a guess at the higher edit
+they mean: a new voicing of a chord, a different chord, the part an octave up, the part
+muted. Every guess is checked by lowering the song with it, and is shown with how many of
+the hand edits it reproduces exactly and how many notes nobody touched it would also change.
+A chord the edited notes spell is offered together with the voicing as played, because a new
+chord on its own would be voiced afresh: the pair keeps the notes and tells the other parts
+what the harmony now is. Keeping a reading drops the note edits it explains.
+
 ## Sound
 
 `pypulang.sounds` holds a measured vocabulary for Surge XT: names and units for values a host
@@ -262,6 +296,7 @@ What exists and is tested:
 | Harmony | Chart symbols, altered tensions, slash bass, reharmonization, transposition |
 | Performance | Swing, humanize, accent, pump, bend |
 | kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
+| Editing above the notes | Intent and score edits kept at their level; `pulang serve` traces a DAW note up every level; hand edits read back as chords, voicings, octaves, velocity and mutes, each checked by lowering |
 | Review | Melody against harmony, ranges, parallels |
 
 Not built, and described elsewhere in these docs:
@@ -269,7 +304,7 @@ Not built, and described elsewhere in these docs:
 | | |
 |---|---|
 | `.pu` standalone syntax | Python and text IR cover both ways of writing a song for now |
-| Lifting | Inferring IR from notes. Overrides keep DAW edits without it. |
+| Lifting a whole song | Hand edits are read up one step, to chords, voicings and track settings. Inferring a section's pattern or form from bare notes is not attempted. |
 | MusicXML | No score output yet |
 | Analytical dialects | Schenkerian, set theory, and so on. Dialects are ordinary xDSL, so nothing blocks them. |
 | `density`, `tempo_scale` on `transform` | The language spec names them; neither has a defined meaning yet |

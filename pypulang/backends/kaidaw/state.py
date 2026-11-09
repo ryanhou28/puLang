@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pypulang.compiler.edits import Edit
+
 Note = list[int]  # [pitch, start, duration, velocity], ticks from the clip start
 
 
@@ -56,15 +58,37 @@ class Overrides:
 
     `clips` maps a clip to `{"deleted": true}`, or to any of `start`, `length`, and
     `track` for a clip moved or resized by hand.
+
+    `edits` are edits made above the notes, such as a chord or a voicing, kept at the
+    level they were made at. See `pypulang.compiler.edits`.
     """
 
     notes: dict[str, dict[str, Any]] = field(default_factory=dict)
     added: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     clips: dict[str, dict[str, Any]] = field(default_factory=dict)
+    edits: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def count(self) -> int:
-        return len(self.notes) + sum(len(v) for v in self.added.values()) + len(self.clips)
+        return (
+            len(self.notes)
+            + sum(len(v) for v in self.added.values())
+            + len(self.clips)
+            + len(self.edits)
+        )
+
+    def edit_list(self) -> list[Edit]:
+        return [Edit.from_json(e) for e in self.edits]
+
+    def put_edit(self, edit: Edit) -> None:
+        """Add an edit, replacing one of the same field at the same place."""
+        self.edits = [e for e in self.edits if Edit.from_json(e).key != edit.key]
+        self.edits.append(edit.to_json())
+
+    def drop_edit(self, key: str) -> bool:
+        before = len(self.edits)
+        self.edits = [e for e in self.edits if Edit.from_json(e).key != key]
+        return len(self.edits) != before
 
 
 class SongState:

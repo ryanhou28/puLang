@@ -14,6 +14,7 @@ The `pulang` command.
     pulang render song.py -o song.wav     Bounce it
     pulang stems song.py -o stems/        Bounce each track alone, and measure them
     pulang watch song.py                  Push every time the file is saved
+    pulang serve song.py                  Show the IR beside kaiDAW, and edit it there
 """
 
 from __future__ import annotations
@@ -132,6 +133,8 @@ def cmd_edits(args: argparse.Namespace) -> int:
             print(f"drawn    {clip}: {item['note']}")
     for clip, directive in sorted(overrides.clips.items()):
         print(f"clip     {clip}: {directive}")
+    for edit in overrides.edit_list():
+        print(f"{edit.level:8s} {edit.key}: {edit.base!r} -> {edit.value!r}")
     if not overrides.count:
         print("No edits.")
     return 0
@@ -140,11 +143,20 @@ def cmd_edits(args: argparse.Namespace) -> int:
 def cmd_drop(args: argparse.Namespace) -> int:
     state = _state(args)
     overrides = state.load_overrides()
-    if overrides.notes.pop(args.location, None) is None:
+    # An edit above the notes is named "level:target:field", as `pulang edits` lists it.
+    if not overrides.drop_edit(args.location) and overrides.notes.pop(args.location, None) is None:
         print(f"No edit at {args.location}", file=sys.stderr)
         return 1
     state.save_overrides(overrides)
     print(f"Dropped {args.location}. The next push restores what the source makes there.")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from pypulang.serve import serve
+
+    client = None if args.offline else _client(args)
+    serve(args.song, client, args.listen)
     return 0
 
 
@@ -279,6 +291,13 @@ def main(argv: list[str] | None = None) -> int:
     save = with_port(command("save", cmd_save, "Save the open project"))
     save.add_argument("path", help="A project directory the server can write")
     command("edits", cmd_edits, "List edits made in the DAW")
+    serve_cmd = with_port(
+        command("serve", cmd_serve, "Show the IR beside kaiDAW, and edit it there")
+    )
+    serve_cmd.add_argument("--listen", type=int, default=8950, help="This page's port")
+    serve_cmd.add_argument(
+        "--offline", action="store_true", help="Edit the song without pushing to kaiDAW"
+    )
     drop = command("drop", cmd_drop, "Forget one edit")
     drop.add_argument("location")
 

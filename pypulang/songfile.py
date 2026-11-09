@@ -16,6 +16,7 @@ A song is a Python file that builds a piece, or a text file of `intent` IR.
 from __future__ import annotations
 
 import runpy
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from xdsl.dialects.builtin import ModuleOp
 from xdsl.passes import ModulePass
 
 from pypulang.compiler import CompileResult, compile_piece, parse_ir
+from pypulang.compiler.edits import Edit
 from pypulang.dsl import PieceBuilder
 from pypulang.ir.intent import Piece
 
@@ -39,7 +41,23 @@ class Song:
     def module_or_piece(self) -> Piece | ModuleOp:
         return parse_ir(self.source) if isinstance(self.source, str) else self.source
 
-    def compile(self, until: str = "daw", keep_trace: bool = False) -> CompileResult:
+    def edits(self) -> list[Edit]:
+        """Edits made above the notes, kept beside the song in its overrides."""
+        from pypulang.backends.kaidaw.state import SongState
+
+        return SongState.beside(self.path).load_overrides().edit_list()
+
+    def compile(
+        self,
+        until: str = "daw",
+        keep_trace: bool = False,
+        edits: Sequence[Edit] | None = None,
+    ) -> CompileResult:
+        """
+        Compile the song with its edits, or with `edits` instead when given.
+
+        A song is its source plus its overrides, so this is what every command sees.
+        """
         return compile_piece(
             self.module_or_piece(),
             until=until,
@@ -48,6 +66,7 @@ class Song:
             event_passes=self.pipeline.get("event", ()),
             daw_passes=self.pipeline.get("daw", ()),
             keep_trace=keep_trace,
+            edits=self.edits() if edits is None else edits,
         )
 
 
