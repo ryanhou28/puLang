@@ -61,3 +61,6 @@ Thumbs.db
 
 # A song's lock file names objects in one local project. Its overrides are part of the song.
 **/*.pulang/lock.json
+
+# Drum kits built by scripts/get_drum_samples.py; their sources say where they come from.
+examples/songs/samples/

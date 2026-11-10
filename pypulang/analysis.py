@@ -38,10 +38,16 @@ class Span:
     bands: dict[str, float]
 
 
-def load(path: str) -> tuple[np.ndarray, int]:
-    """Read a WAV as mono floats."""
+def load(path: str, mono: bool = True) -> tuple[np.ndarray, int]:
+    """
+    Read a WAV as floats, mixed to mono unless `mono` is False.
+
+    Clipping must be looked for in the channels: a mono mix averages a clipped
+    left channel with an unclipped right and hides it. `clipped_samples` takes
+    either.
+    """
     audio, rate = sf.read(path, always_2d=True)
-    return audio.mean(axis=1), rate
+    return (audio.mean(axis=1) if mono else audio), rate
 
 
 def _spectrum(samples: np.ndarray, rate: int) -> tuple[np.ndarray, np.ndarray]:
@@ -106,7 +112,9 @@ def pitch_track(samples: np.ndarray, rate: int, window_ms: float = 12.0) -> list
 
 
 def clipped_samples(samples: np.ndarray, threshold: float = 0.999) -> int:
-    return int((np.abs(samples) >= threshold).sum())
+    """Frames at or past `threshold` in any channel."""
+    level = np.abs(samples)
+    return int(((level.max(axis=1) if level.ndim == 2 else level) >= threshold).sum())
 
 
 def report(spans: list[Span]) -> str:

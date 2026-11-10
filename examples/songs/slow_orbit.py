@@ -14,7 +14,7 @@ from pypulang.sounds import fusion_drums, fusion_rack
 KICK, SNARE, HAT, RIDE = 31, 55, 60, 84
 
 with piece(tempo=116, key="D dorian", title="Slow Orbit") as song:
-    fusion_rack(song)
+    fusion_rack(song, kit="samples/jazz")
 
     # --- Intro: a pedal and a question ---------------------------------------
     intro = song.section("intro", bars=8)

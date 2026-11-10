@@ -258,6 +258,16 @@ or the server has lost it. Audio clips follow the rule notes and parameters foll
 or deleted in the DAW stays that way, and one is changed only when its source changes.
 Paths are relative to the song file. kaiDAW reads WAV, AIFF and FLAC.
 
+The example songs play sampled drums: `fusion_rack(song, kit="samples/jazz")` and
+`future_bass_rack(song, kit="samples/future")` put one sampler per drum track, on the keys
+the Surge stand-ins used, with gains measured so each drum sits where its stand-in did.
+The kits are not in the repository. `python scripts/get_drum_samples.py` builds them into
+`examples/songs/samples/` from their sources in about half a minute: a jazz kit from
+[Virtuosity Drums](https://versilian-studios.com/virtuosity-drums/) (CC0), each hit mixed
+from its close, overhead and room mics, read straight out of the 1.2 GB archive with range
+requests; and a future-bass kit of CC0 Kickmess kicks and TR-909 hits by F9 Audio, which are
+free to use but not to redistribute. Without a `kit`, the racks use the Surge drums.
+
 ## Sound
 
 `pypulang.sounds` holds a measured vocabulary for Surge XT: names and units for values a host
