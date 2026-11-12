@@ -5,10 +5,14 @@ Harmony is an SSA value, so a track says which chords it follows and a pass that
 rewrites the harmony reaches every track that uses it.
 
     intent.piece "song" tempo 120 key "G major" meter 4/4 {
+      intent.motif "hook" "5/8 6 1'/4 7/8 5/4."
       intent.section "verse" bars 8 {
         %0 = intent.harmony ...
         intent.track "bass" role "bass" {
           intent.pattern "root_eighths" over %0 ...
+        }
+        intent.track "lead" role "melody" {
+          intent.melody "hook; hook +1" over %0 range 64 to 84 fit 1
         }
       }
     }
@@ -95,6 +99,11 @@ class PieceOp(IRDLOperation):
 
     def sections(self) -> list[SectionOp]:
         return [op for op in self.body.block.ops if isinstance(op, SectionOp)]
+
+    def motifs(self) -> dict[str, str]:
+        return {
+            op.motif.data: op.notes.data for op in self.body.block.ops if isinstance(op, MotifOp)
+        }
 
 
 @irdl_op_definition
@@ -234,6 +243,50 @@ class PatternOp(IRDLOperation):
 
 
 @irdl_op_definition
+class MotifOp(IRDLOperation):
+    """A short idea in scale degrees, named so melodies can state and develop it."""
+
+    name = "intent.motif"
+    motif = prop_def(StringAttr)
+    notes = prop_def(StringAttr)
+    assembly_format = "$motif $notes attr-dict"
+
+    def __init__(self, motif: str, notes: str):
+        super().__init__(properties={"motif": StringAttr(motif), "notes": StringAttr(notes)})
+
+
+@irdl_op_definition
+class MelodyOp(IRDLOperation):
+    """
+    A phrase of motifs, fitted to the harmony it is given. See `pypulang.motifs`.
+
+    `low` and `high` are the MIDI range the line keeps to; `fit` is 1 when clashing
+    notes on strong beats move onto the chord.
+    """
+
+    name = "intent.melody"
+    phrase = prop_def(StringAttr)
+    low = prop_def(IntegerAttr)
+    high = prop_def(IntegerAttr)
+    fit = prop_def(IntegerAttr)
+    harmony = operand_def(HarmonyType)
+    assembly_format = (
+        "$phrase `over` $harmony `range` $low `to` $high `fit` $fit attr-dict `:` type($harmony)"
+    )
+
+    def __init__(self, phrase: str, harmony: SSAValue, low: int, high: int, fit: bool):
+        super().__init__(
+            operands=[harmony],
+            properties={
+                "phrase": StringAttr(phrase),
+                "low": IntegerAttr(low, i64),
+                "high": IntegerAttr(high, i64),
+                "fit": IntegerAttr(int(fit), i64),
+            },
+        )
+
+
+@irdl_op_definition
 class NotesOp(IRDLOperation):
     """Literal notes: the escape hatch from patterns."""
 
@@ -353,6 +406,18 @@ class AudioOp(IRDLOperation):
 
 IntentDialect = Dialect(
     "intent",
-    [PieceOp, SectionOp, HarmonyOp, TrackOp, PatternOp, NotesOp, NoteOp, CurveOp, AudioOp],
+    [
+        PieceOp,
+        SectionOp,
+        HarmonyOp,
+        TrackOp,
+        PatternOp,
+        MotifOp,
+        MelodyOp,
+        NotesOp,
+        NoteOp,
+        CurveOp,
+        AudioOp,
+    ],
     [HarmonyType],
 )

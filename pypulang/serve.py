@@ -30,6 +30,7 @@ from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.harmony import parse_chord_symbol
 from pypulang.inspector import ClipView, Model, NoteChain
 from pypulang.ir.intent import Key
+from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.patterns import PATTERN_REGISTRY
 from pypulang.songfile import load_song
 
@@ -149,6 +150,12 @@ class Companion:
             return int(text)
         if edit.field == "muted":
             return text.lower() in ("1", "on", "true", "yes")
+        if edit.field == "melody":
+            parse_phrase(text)
+            return text
+        if edit.field == "notes":
+            parse_motif(text)
+            return text
         if edit.field == "pattern":
             kind, _, params = text.partition(" ")
             if kind not in PATTERN_REGISTRY and kind not in CONTEXT_PATTERNS:
@@ -317,6 +324,11 @@ def _clip_html(view: ClipView, model: Model, back: str) -> list[str]:
                     " " + json.dumps(value["params"]) if value["params"] else ""
                 )
                 hint = "a pattern name, optionally followed by its parameters as JSON"
+            elif name == "melody":
+                text, hint = (
+                    value,
+                    "motifs and how each is developed, such as: hook; hook +1; hook end 1",
+                )
             else:
                 text, hint = (
                     value,
@@ -332,6 +344,17 @@ def _clip_html(view: ClipView, model: Model, back: str) -> list[str]:
                 f'<td class="dim">{_e(hint)}</td></tr>'
             )
         out.append("</table>")
+        if track.motifs:
+            out.append(
+                '<h2>Its motifs <span class="lvl">intent · everywhere each is used</span></h2>'
+                "<table>"
+            )
+            for motif, notes in track.motifs.items():
+                out.append(
+                    f"<tr><td>{_e(motif)}</td><td>{_form('intent', f'motif/{motif}', 'notes', notes, back, 28)}</td>"
+                    '<td class="dim">scale degrees and note values, such as 5/8 6 1\'/4 7/8</td></tr>'
+                )
+            out.append("</table>")
     return out
 
 

@@ -96,6 +96,8 @@ changes what every track in that section plays, and nothing else has to be told.
 |---|---|
 | `section.chart("Dm9 G13 \| Cmaj9 \| % \| A7alt")` | Harmony as a lead sheet. Loops to fill the section. |
 | `track.line("a4/8 c5 e5/4. r/8 \| g5/2~ g5/8 f5")` | A melody. Values carry over; `>` accent, `?` ghost, `'` staccato, `~` tie. `\|` checks the bar adds up. |
+| `song.motif("hook", "5/8 6 1'/4 7/8 5/4.")` | A short idea in scale degrees, for melodies to develop. See [Motifs](#motifs). |
+| `track.melody("hook; hook +1; hook inv end 1")` | A melody as motifs: stated, sequenced, inverted, answered, fitted to the chords. |
 | `grid(cell="x..o..x.", pitch=36)` | Drums on a step grid, in any meter. |
 | `hits(cell="x-.x-.x.")` | The voicing on a rhythm: stabs, pads, written-out comping. |
 | `riff(cell=..., degrees="1 5 b7 1'")` | A line in chord degrees, so it follows the changes. |
@@ -125,6 +127,58 @@ after `Humanize`, so the bends follow the notes where they landed.
 
 A section's time signature and name reach kaiDAW too: its meter map shows 7/8 where the source
 says 7/8, and every section occurrence is a marker.
+
+## Motifs
+
+A melody written as notes has nothing to come back to. One written as motifs does: name a
+short idea once, in scale degrees, and a phrase states it and develops it.
+
+```python
+from pypulang import *
+from pypulang.pitches import A5, C5, E3, E4
+
+with piece(tempo=96, key="D minor", title="motifs") as song:
+    song.motif("hook", "5/8 6 1'/4 7/8 5/4. r/8")
+    song.motif("sigh", "3/4 2/2")
+    verse = song.section("verse", bars=8)
+    verse.chart("Dm9 | Gm9 | C7 | Fmaj7 | Bbmaj7 | Em7b5 | A7 | Dm9")
+    verse.track("lead", role=Role.MELODY).melody(
+        "hook; hook +1; hook inv end 1; rest 2; sigh x2", low=E4, high=A5
+    )
+    verse.track("keys", role=Role.HARMONY).pattern(comp).voicing("rootless", E3, C5)
+    song.form([verse])
+```
+
+A motif token is a degree 1-7, with `b` or `#` before it to alter it and `'` or `,` after it
+for an octave up or down, then a note value as in `line`. `!` is staccato; `>`, `?` and `~`
+are as in `line`. A phrase is placements separated by `;`, played one after another, and a
+placement is a motif and its developments, applied left to right:
+
+| Development | What it does |
+|---|---|
+| `+2`, `-1` | Sequence: every note moved by scale steps |
+| `^`, `v` | An octave up or down |
+| `inv` | Inversion around the first note |
+| `rev` | Retrograde, rhythm included |
+| `x2`, `x1/2` | Augmentation and diminution |
+| `first 3`, `last 2` | A fragment |
+| `end 1` | End on a degree: the answer to a question |
+| `vary 3` | Passing and neighbour notes; the same number gives the same ornaments |
+| `early 8`, `late 16` | Anticipate or delay by a note value |
+| `rest 2` | A placement of silence |
+
+Degrees are read in the section's key, so a melody follows a key change or a transposition.
+The first placement sits in the octave whose tonic is nearest the middle of the range, and
+each later one in the octave nearest to where the line already is. The range is a strong
+preference: a sequence climbing a step past the top stays put, and one climbing further
+drops an octave. With `fit` (the default), a note on a strong beat or held for a beat that is
+a semitone above a tone of the chord under it moves to the nearest note that belongs, so a
+fourth held over a major chord resolves to the third; 9ths, 11ths over minor chords, and 13ths
+are kept.
+
+Motifs and phrases are edits at the intent level too: `motif/hook` with field `notes` changes
+every place the motif is used, and a track's `melody` field changes its phrase. The companion
+page shows both for a melody track.
 
 ## Voice leading
 
@@ -205,7 +259,8 @@ were made at, as edits of the IR, and applied by a pass when the song compiles:
 | Level | Target | Fields | Reaches |
 |---|---|---|---|
 | intent | `verse/harmony@3+0` (the chord starting at bar 3, beat 0) | `chord` | every occurrence of the section |
-| intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern` | every occurrence |
+| intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern`, `melody` | every occurrence |
+| intent | `motif/hook` | `notes` | every place the motif is used |
 | score | `verse#2/harmony@3+0` | `chord` | the second verse only; voiced in context |
 | score | `verse#2/keys/c4` | `pitches` | the exact notes of one chord in one part |
 
@@ -332,6 +387,7 @@ What exists and is tested:
 | Lowerings | All four, held note for note to the original realizer on the examples and on 150 generated pieces |
 | Voicing | Seven strategies and exact voice leading |
 | Harmony | Chart symbols, altered tensions, slash bass, reharmonization, transposition |
+| Melody | Motifs in scale degrees, developed in phrases and fitted to the chords |
 | Performance | Swing, humanize, accent, pump, bend |
 | kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
 | Editing above the notes | Intent and score edits kept at their level; `pulang serve` traces a DAW note up every level; hand edits read back as chords, voicings, octaves, velocity and mutes, each checked by lowering |

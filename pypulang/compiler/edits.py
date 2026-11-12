@@ -11,6 +11,8 @@ Each edit names its target the way locations do, by musical position:
     level   target                       field
     intent  "verse/harmony@3+0"          chord      the chord starting at bar 3, beat 0
     intent  "verse/keys"                 voicing | octave | velocity | muted | pattern
+    intent  "verse/lead"                 melody     the phrase: which motifs, developed how
+    intent  "motif/hook"                 notes      a motif, changed everywhere it is used
     score   "verse#2/harmony@3+0"        chord      the same chord, in the 2nd verse only
     score   "verse#2/keys/c4"            pitches    one chord's exact notes, for one part
 
@@ -36,10 +38,11 @@ from pypulang.compiler.locs import loc_key
 from pypulang.compiler.passes.lower_intent import _chord_spans
 from pypulang.harmony import chord_symbol, parse_chord_symbol
 from pypulang.ir.intent import Key, TimeSignature
+from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.resolution import resolve_chord
 
 LEVELS = ("intent", "score")
-TRACK_FIELDS = ("voicing", "octave", "velocity", "muted", "pattern")
+TRACK_FIELDS = ("voicing", "octave", "velocity", "muted", "pattern", "melody")
 
 
 @dataclass
@@ -123,6 +126,9 @@ def track_value(track: intent.TrackOp, name: str) -> Any:
         if pattern is None:
             return None
         return {"kind": pattern.kind.data, "params": from_attr(pattern.params)}
+    if name == "melody":
+        melody = next((o for o in track.body.block.ops if isinstance(o, intent.MelodyOp)), None)
+        return melody.phrase.data if melody is not None else None
     raise ValueError(f"No track setting {name!r}; settings are {', '.join(TRACK_FIELDS)}")
 
 
@@ -142,6 +148,12 @@ def _set_track(track: intent.TrackOp, name: str, value: Any) -> None:
             raise ValueError("this track plays written notes, not a pattern")
         pattern.properties["kind"] = StringAttr(value["kind"])
         pattern.properties["params"] = to_attr(value.get("params", {}))
+    elif name == "melody":
+        melody = next((o for o in track.body.block.ops if isinstance(o, intent.MelodyOp)), None)
+        if melody is None:
+            raise ValueError("this track plays no melody")
+        parse_phrase(str(value))
+        melody.properties["phrase"] = StringAttr(str(value))
 
 
 def _piece(module: ModuleOp) -> intent.PieceOp:
@@ -150,6 +162,13 @@ def _piece(module: ModuleOp) -> intent.PieceOp:
 
 def _intent_section(piece: intent.PieceOp, name: str) -> intent.SectionOp | None:
     return next((s for s in piece.sections() if s.section.data == name), None)
+
+
+def _motif_op(piece: intent.PieceOp, name: str) -> intent.MotifOp | None:
+    return next(
+        (o for o in piece.body.block.ops if isinstance(o, intent.MotifOp) and o.motif.data == name),
+        None,
+    )
 
 
 def _section_key(piece: intent.PieceOp, section: intent.SectionOp) -> Key:
@@ -164,6 +183,11 @@ def current_value(module: ModuleOp, edit: Edit) -> tuple[bool, Any]:
         Whether the target exists, and its value
     """
     piece = _piece(module)
+    if edit.target.startswith("motif/"):
+        motif = _motif_op(piece, edit.target.removeprefix("motif/"))
+        if motif is None or edit.field != "notes":
+            return False, None
+        return True, motif.notes.data
     name, _, rest = _parse_target(edit.target)
     section = _intent_section(piece, name)
     if section is None:
@@ -201,6 +225,12 @@ class ApplyIntentEdits(ModulePass):
                 self.report.stale.append(
                     f"{edit.key}: edited when the source gave {edit.base!r}, source now gives {now!r}"
                 )
+            if edit.target.startswith("motif/"):
+                motif = _motif_op(piece, edit.target.removeprefix("motif/"))
+                parse_motif(str(edit.value))
+                motif.properties["notes"] = StringAttr(str(edit.value))
+                self.report.applied.append(edit.key)
+                continue
             name, _, rest = _parse_target(edit.target)
             section = _intent_section(piece, name)
             if rest.startswith("harmony@"):

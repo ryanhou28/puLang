@@ -3,7 +3,9 @@
 
 Patterns are not expanded here. Each chord of each part becomes a `score.slot`
 holding a close-position voicing, so later passes can revoice it before any note
-exists. Literal notes have nothing left to decide and go straight into bars.
+exists. Literal notes have nothing left to decide and go straight into bars, and so
+do melodies, once their motifs are resolved in the section's key and fitted to its
+chords.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from pypulang.compiler.notes import NoteRecord, add_notes
 from pypulang.compiler.timeline import Timeline
 from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.ir.intent import Chord, Key, TimeSignature
+from pypulang.motifs import realize
 from pypulang.resolution import resolve_chord
 
 
@@ -144,6 +147,50 @@ def _literal_records(
     return records
 
 
+def _melody_records(
+    occurrence: _Occurrence,
+    track: intent.TrackOp,
+    melody: intent.MelodyOp,
+    motifs: dict[str, str],
+) -> list[NoteRecord]:
+    marker = occurrence.marker
+    meter: TimeSignature = marker.meter.data
+    harmony = melody.harmony.owner
+    assert isinstance(harmony, intent.HarmonyOp)
+    try:
+        notes = realize(
+            melody.phrase.data,
+            motifs,
+            marker.key.data,
+            _chord_spans(harmony, marker.length, meter),
+            meter.beats_per_bar,
+            low=melody.low.value.data,
+            high=melody.high.value.data,
+            fit=bool(melody.fit.value.data),
+            # The same in every occurrence, as written notes are
+            seed=f"{marker.section.data}/{track.track.data}",
+        )
+    except ValueError as error:
+        raise ValueError(f"{marker.section.data}/{track.track.data}: {error}") from error
+    start = marker.start.data
+    octave = track.octave.value.data
+    base = track.velocity.value.data
+    records = []
+    for note in notes:
+        if note.start >= marker.length:
+            break  # a phrase longer than its section stops at the section's end
+        records.append(
+            NoteRecord(
+                pitch=note.pitch + octave * 12,
+                start=start + note.start,
+                dur=min(note.dur, marker.length - note.start),
+                vel=max(1, min(127, int(base * note.velocity_scale))),
+                articulation=note.articulation,
+            )
+        )
+    return records
+
+
 def _chord_timeline(occurrences: list[_Occurrence]) -> list[score.ChordOp]:
     timeline = []
     for occurrence in occurrences:
@@ -167,6 +214,7 @@ class LowerIntentToScore(ModulePass):
         piece = pieces[0]
         occurrences = _layout(piece)
         timeline = Timeline([o.marker for o in occurrences])
+        motifs = piece.motifs()
 
         parts: dict[str, score.PartOp] = {}
         for index, occurrence in enumerate(occurrences):
@@ -193,6 +241,12 @@ class LowerIntentToScore(ModulePass):
                             parts[name],
                             timeline,
                             _literal_records(occurrence, track, content),
+                        )
+                    elif isinstance(content, intent.MelodyOp):
+                        add_notes(
+                            parts[name],
+                            timeline,
+                            _melody_records(occurrence, track, content, motifs),
                         )
             for curve in occurrence.op.curves():
                 name = curve.track.data

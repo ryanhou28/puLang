@@ -26,6 +26,7 @@ from pypulang.ir.intent import (
     Device,
     Harmony,
     Key,
+    Melody,
     Note,
     Notes,
     Pattern,
@@ -37,6 +38,7 @@ from pypulang.ir.intent import (
     TrackContent,
 )
 from pypulang.lines import parse_line
+from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.reharm import reharmonize as reharmonize_changes
 from pypulang.reharm import transposed_key
 
@@ -549,6 +551,28 @@ class TrackBuilder:
         self._content = Notes(notes=notes)
         return self
 
+    def melody(self, phrase: str, low: int = 60, high: int = 84, fit: bool = True) -> TrackBuilder:
+        """
+        Play a phrase made of the piece's motifs. See `pypulang.motifs`.
+
+        Args:
+            phrase: Placements separated by ";", each a motif and its developments,
+                such as "hook; hook +1; hook inv end 1; rest 2"
+            low: Lowest MIDI pitch the line goes to, such as C4
+            high: Highest MIDI pitch
+            fit: Move a note held on a strong beat that clashes with the chord onto it
+
+        The notes are scale degrees of the section's key, so the melody follows a
+        key change or a transposition, and are placed against the section's chords.
+
+        Example:
+            p.motif("hook", "5/8 6 1'/4 7/8 5/4.")
+            verse.track("lead", role=Role.MELODY).melody("hook; hook -1; hook end 1")
+        """
+        parse_phrase(phrase)  # report a mistake here rather than at compile time
+        self._content = Melody(phrase=phrase, low=int(low), high=int(high), fit=fit)
+        return self
+
     def voicing(self, name: str, low: int | None = None, high: int | None = None) -> TrackBuilder:
         """
         Choose how this track voices its chords.
@@ -927,6 +951,7 @@ class PieceBuilder:
         self._sections: list[SectionBuilder] = []
         self._form: list[str] | None = None
         self._racks: list[Rack] = []
+        self._motifs: dict[str, str] = {}
 
     def section(
         self,
@@ -1000,6 +1025,23 @@ class PieceBuilder:
         )
         return self
 
+    def motif(self, name: str, notes: str) -> PieceBuilder:
+        """
+        Name a short melodic idea, written in scale degrees, for melodies to use.
+
+        Args:
+            name: What phrases call it
+            notes: Degrees 1-7 with note values, as in "5/8 6 1'/4 7/8 5/4. r/8".
+                "b"/"#" before a degree alter it; "'" after it is an octave up and ","
+                an octave down. See `pypulang.motifs`.
+
+        Example:
+            p.motif("hook", "5/8 6 1'/4 7/8 5/4.")
+        """
+        parse_motif(notes)  # report a mistake here rather than at compile time
+        self._motifs[name] = notes
+        return self
+
     def form(self, sections: list[SectionBuilder | str]) -> PieceBuilder:
         """
         Set the form (section order) for this piece.
@@ -1020,6 +1062,7 @@ class PieceBuilder:
             sections=[s._to_ir() for s in self._sections],
             form=self._form,
             racks=list(self._racks),
+            motifs=dict(self._motifs),
         )
 
     def to_midi(self, ticks_per_beat: int = 480) -> mido.MidiFile:
