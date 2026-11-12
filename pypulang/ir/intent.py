@@ -598,6 +598,31 @@ class AudioPlacement:
 
 
 @dataclass
+class Fill:
+    """
+    A drum fill: the last `beats` of a section, or of every `every` bars, played as
+    these cells on these drum tracks while the other drum tracks rest.
+
+    Attributes:
+        cells: Track name to a rhythm cell, one step per `step` beats
+        beats: How long the fill is
+        every: Fill at the end of every this many bars; None for the section's end only
+        step: Beats per step
+        keep: Drum tracks that keep playing through the fill, such as a hi-hat foot
+        pitches: The MIDI note for a track that has no drum pattern in the section
+        velocity: Base velocity of the fill's hits
+    """
+
+    cells: dict[str, str]
+    beats: Fraction = Fraction(2)
+    every: int | None = None
+    step: Fraction = Fraction(1, 4)
+    keep: list[str] = field(default_factory=list)
+    pitches: dict[str, int] = field(default_factory=dict)
+    velocity: int = 96
+
+
+@dataclass
 class Curve:
     """
     A parameter moving during a section.
@@ -656,6 +681,7 @@ class Section:
     tracks: list[Track] = field(default_factory=list)
     curves: list[Curve] = field(default_factory=list)
     audio: list[AudioPlacement] = field(default_factory=list)
+    fills: list[Fill] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {

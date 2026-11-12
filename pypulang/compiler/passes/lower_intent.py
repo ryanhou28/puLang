@@ -18,7 +18,7 @@ from xdsl.dialects.builtin import ModuleOp
 from xdsl.passes import ModulePass
 
 from pypulang.compiler.dialects import daw, event, intent, score
-from pypulang.compiler.dialects.mus import from_attr
+from pypulang.compiler.dialects.mus import from_attr, to_attr
 from pypulang.compiler.locs import in_section, loc_key
 from pypulang.compiler.notes import NoteRecord, add_notes
 from pypulang.compiler.timeline import Timeline
@@ -26,6 +26,7 @@ from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.ir.intent import Chord, Key, TimeSignature
 from pypulang.motifs import MelodyNote, Trace, realize_traced
 from pypulang.resolution import resolve_chord
+from pypulang.rhythm import read_cell, scaled_velocity
 
 
 @dataclass
@@ -215,6 +216,71 @@ def _melody_records(
     return records
 
 
+def _drum_pitch(section: intent.SectionOp, track: str) -> int | None:
+    """The note a drum track's grid plays in a section, octave included."""
+    op = next((t for t in section.tracks() if t.track.data == track), None)
+    if op is None:
+        return None
+    for content in op.body.block.ops:
+        if isinstance(content, intent.PatternOp) and content.kind.data == "grid":
+            params = from_attr(content.params)
+            return int(params.get("pitch", 60)) + 12 * op.octave.value.data
+    return None
+
+
+def _fills(
+    occurrence: _Occurrence,
+) -> tuple[list[tuple[Fraction, Fraction]], set[str], dict[str, list[NoteRecord]]]:
+    """
+    The fill windows of one occurrence, in absolute beats; the drum tracks that keep
+    playing through them; and each fill track's hits.
+    """
+    marker = occurrence.marker
+    bar_beats = marker.meter.data.beats_per_bar
+    length = marker.length
+    start = marker.start.data
+    windows: list[tuple[Fraction, Fraction]] = []
+    keep: set[str] = set()
+    records: dict[str, list[NoteRecord]] = {}
+    for fill in occurrence.op.fills():
+        beats = fill.beats.data
+        step = fill.step.data
+        every = fill.every.value.data if fill.every is not None else None
+        ends = (
+            [bar_beats * every * k for k in range(1, int(length // (bar_beats * every)) + 1)]
+            if every
+            else [length]
+        )
+        keep.update(k.data for k in fill.keep.data)
+        pitches = from_attr(fill.pitches)
+        for end in ends:
+            window = (start + max(Fraction(0), end - beats), start + end)
+            windows.append(window)
+            for track, cell in from_attr(fill.cells).items():
+                pitch = pitches.get(track, _drum_pitch(occurrence.op, track))
+                if pitch is None:
+                    raise ValueError(
+                        f"{marker.section.data}: the fill plays {track!r}, which has no drum "
+                        "pattern in this section; give its note in `pitches`"
+                    )
+                hits, steps = read_cell(cell)
+                # A cell shorter or longer than the fill is lined up with its end,
+                # because a fill leads into the next downbeat.
+                origin = window[1] - steps * step
+                for hit in hits:
+                    at = origin + hit.step * step
+                    if window[0] <= at < window[1]:
+                        records.setdefault(track, []).append(
+                            NoteRecord(
+                                pitch=int(pitch),
+                                start=at,
+                                dur=step * hit.steps / 2,
+                                vel=scaled_velocity(fill.velocity.value.data, hit.weight),
+                            )
+                        )
+    return windows, keep, records
+
+
 def _chord_timeline(occurrences: list[_Occurrence]) -> list[score.ChordOp]:
     timeline = []
     for occurrence in occurrences:
@@ -245,6 +311,7 @@ class LowerIntentToScore(ModulePass):
             following = (
                 _first_chord(occurrences[index + 1].op) if index + 1 < len(occurrences) else None
             )
+            windows, keep, fill_notes = _fills(occurrence)
             for track in occurrence.op.tracks():
                 if track.muted.value.data:
                     continue
@@ -258,7 +325,11 @@ class LowerIntentToScore(ModulePass):
                     )
                 for content in track.body.block.ops:
                     if isinstance(content, intent.PatternOp):
+                        silent = track.role.data == "rhythm" and name not in keep
                         for slot in _slots_for(occurrence, following, track, content):
+                            if silent and windows:
+                                params = {**from_attr(slot.params), "silence": windows}
+                                slot.properties["params"] = to_attr(params)
                             parts[name].body.block.add_op(slot)
                     elif isinstance(content, intent.NotesOp):
                         add_notes(
@@ -272,6 +343,16 @@ class LowerIntentToScore(ModulePass):
                             timeline,
                             _melody_records(occurrence, track, content, motifs),
                         )
+            for name, records in fill_notes.items():
+                if name not in parts:
+                    # A drum that only plays in fills, such as a tom
+                    parts[name] = score.PartOp(name, "rhythm", "", [])
+                    parts[name].location = in_section(
+                        f"{occurrence.marker.section.data}/{name}",
+                        occurrence.marker.section.data,
+                        occurrence.marker.occurrence.value.data,
+                    )
+                add_notes(parts[name], timeline, records)
             for curve in occurrence.op.curves():
                 name = curve.track.data
                 if name not in parts:

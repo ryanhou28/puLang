@@ -106,6 +106,7 @@ changes what every track in that section plays, and nothing else has to be told.
 | `song.motif("hook", "5/8 6 1'/4 7/8 5/4.")` | A short idea in scale degrees, for melodies to develop. See [Motifs](#motifs). |
 | `track.melody("hook; hook +1; hook inv end 1")` | A melody as motifs: stated, sequenced, inverted, answered, fitted to the chords. |
 | `grid(cell="x..o..x.", pitch=36)` | Drums on a step grid, in any meter. |
+| `section.fill("tom run", beats=2, keep=("pedal",))` | A drum fill at the section's end, or `every=4` bars. See [Fills](#fills). |
 | `hits(cell="x-.x-.x.")` | The voicing on a rhythm: stabs, pads, written-out comping. |
 | `riff(cell=..., degrees="1 5 b7 1'")` | A line in chord degrees, so it follows the changes. |
 | `walking_bass`, `comp`, `solo_line` | Generators that see the chord, the next chord, and the bar. |
@@ -195,6 +196,34 @@ are kept.
 Motifs and phrases are edits at the intent level too: `motif/hook` with field `notes` changes
 every place the motif is used, and a track's `melody` field changes its phrase. The companion
 page shows both for a melody track.
+
+## Fills
+
+A drummer stops keeping time at the end of a phrase and plays a figure that leads into the
+next downbeat. `section.fill` says so: for the fill's last beats of the section, or of every
+`every` bars, the drum tracks rest, except those in `keep`, and the fill's cells play on the
+tracks it names.
+
+```python
+from pypulang import *
+
+with piece(tempo=126, key="D minor", title="fills") as song:
+    verse = song.section("verse", bars=8)
+    verse.chart("Dm9 | Gm9 | Em7b5 | A7b9")
+    verse.track("ride", role=Role.RHYTHM).pattern(grid(cell="x...x.x.x...x.x.", pitch=51))
+    verse.track("pedal", role=Role.RHYTHM).pattern(grid(cell="....x.......x...", pitch=44))
+    verse.track("snare", role=Role.RHYTHM).pattern(grid(cell="............x...", pitch=38))
+    verse.fill("setup", beats=1, every=4, keep=("pedal",))
+    verse.fill({"snare": "o.o.oxxX", "kick": "x......x"}, beats=2, pitches={"kick": 36})
+    song.form([verse])
+```
+
+The named fills size themselves to the beats they are given: `snare roll` (ghosted sixteenths
+rising to an accent), `tom run` (snare, then high tom, then low tom), `setup` (kick and snare
+on the last offbeats, the band's cue) and `stop` (one hit, then silence). They name their
+lanes as tracks: `snare`, `kick`, `tom_high`, `tom_low`, `crash`. A track that only plays in
+fills, such as a tom, takes its note from `pitches`; any other takes the note of its own
+grid. A cell shorter than the fill is lined up with its end.
 
 ## Voice leading
 

@@ -154,6 +154,9 @@ class SectionOp(IRDLOperation):
     def audio(self) -> list[AudioOp]:
         return [op for op in self.body.block.ops if isinstance(op, AudioOp)]
 
+    def fills(self) -> list[FillOp]:
+        return [op for op in self.body.block.ops if isinstance(op, FillOp)]
+
 
 @irdl_op_definition
 class HarmonyOp(IRDLOperation):
@@ -332,6 +335,51 @@ class NoteOp(IRDLOperation):
 
 
 @irdl_op_definition
+class FillOp(IRDLOperation):
+    """
+    A drum fill at the end of a section, or of every `every` bars.
+
+    `cells` maps a drum track to its rhythm cell over the fill; `keep` lists the
+    drum tracks that play on through it, and every other drum track rests there.
+    """
+
+    name = "intent.fill"
+    beats = prop_def(RationalAttr)
+    every = opt_prop_def(IntegerAttr)
+    step = prop_def(RationalAttr)
+    cells = prop_def(DictionaryAttr)
+    keep = prop_def(ArrayAttr[StringAttr])
+    pitches = prop_def(DictionaryAttr)
+    velocity = prop_def(IntegerAttr)
+    assembly_format = (
+        "$cells `for` $beats (`every` $every^)? `step` $step `keep` $keep "
+        "`pitches` $pitches `velocity` $velocity attr-dict"
+    )
+
+    def __init__(
+        self,
+        cells: dict[str, str],
+        beats: Fraction,
+        every: int | None,
+        step: Fraction,
+        keep: Sequence[str],
+        pitches: dict[str, int],
+        velocity: int,
+    ):
+        props: dict[str, Attribute] = {
+            "beats": RationalAttr(Fraction(beats)),
+            "step": RationalAttr(Fraction(step)),
+            "cells": to_attr(dict(cells)),
+            "keep": ArrayAttr([StringAttr(k) for k in keep]),
+            "pitches": to_attr({k: int(v) for k, v in pitches.items()}),
+            "velocity": IntegerAttr(velocity, i64),
+        }
+        if every is not None:
+            props["every"] = IntegerAttr(every, i64)
+        super().__init__(properties=props)
+
+
+@irdl_op_definition
 class CurveOp(IRDLOperation):
     """
     A parameter moving during a section.
@@ -418,6 +466,7 @@ IntentDialect = Dialect(
         NoteOp,
         CurveOp,
         AudioOp,
+        FillOp,
     ],
     [HarmonyType],
 )

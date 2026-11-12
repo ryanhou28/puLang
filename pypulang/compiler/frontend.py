@@ -68,12 +68,19 @@ def _section_op(section: Section) -> intent.SectionOp:
         )
         audio_op.location = name_loc(f"{section.name}/{placed.track}/audio{index}")
         audio.append(audio_op)
+    fills = []
+    for index, fill in enumerate(section.fills):
+        fill_op = intent.FillOp(
+            fill.cells, fill.beats, fill.every, fill.step, fill.keep, fill.pitches, fill.velocity
+        )
+        fill_op.location = name_loc(f"{section.name}/fill{index}")
+        fills.append(fill_op)
     op = intent.SectionOp(
         section.name,
         section.bars,
         section.key,
         section.time_signature,
-        [harmony, *tracks, *curves, *audio],
+        [harmony, *tracks, *curves, *audio, *fills],
     )
     op.location = name_loc(section.name)
     return op

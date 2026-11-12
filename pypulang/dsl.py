@@ -17,6 +17,7 @@ from enum import Enum
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Union
 
+from pypulang.fills import fill_cells
 from pypulang.harmony import chart_changes
 from pypulang.ir.intent import (
     AudioPlacement,
@@ -24,6 +25,7 @@ from pypulang.ir.intent import (
     ChordChange,
     Curve,
     Device,
+    Fill,
     Harmony,
     Key,
     Melody,
@@ -41,6 +43,7 @@ from pypulang.lines import parse_line
 from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.reharm import reharmonize as reharmonize_changes
 from pypulang.reharm import transposed_key
+from pypulang.rhythm import read_cell
 
 if TYPE_CHECKING:
     import mido
@@ -670,6 +673,7 @@ class SectionBuilder:
         self._tracks: list[TrackBuilder] = []
         self._curves: list[Curve] = []
         self._audio: list[AudioPlacement] = []
+        self._fills: list[Fill] = []
 
     @property
     def name(self) -> str:
@@ -821,6 +825,7 @@ class SectionBuilder:
                 )
             section._tracks.append(copied)
         section._curves = list(self._curves)
+        section._fills = list(self._fills)
         return section
 
     def automate(
@@ -886,6 +891,53 @@ class SectionBuilder:
         )
         return self
 
+    def fill(
+        self,
+        fill: str | dict[str, str],
+        beats: float | Fraction = 2,
+        every: int | None = None,
+        step: float | Fraction = Fraction(1, 16),
+        keep: tuple[str, ...] | list[str] = (),
+        pitches: dict[str, int] | None = None,
+        velocity: int = 96,
+    ) -> SectionBuilder:
+        """
+        A drum fill at the end of this section, or at the end of every few bars.
+
+        The drum tracks stop keeping time for the fill's beats, except those in
+        `keep`, and the fill plays on the tracks it names. See `pypulang.fills`.
+
+        Args:
+            fill: A named fill ("snare roll", "tom run", "setup", "stop"), or track
+                names to rhythm cells, such as {"snare": "o.o.oxxX"}
+            beats: How long it is, in beats
+            every: Fill at the end of every this many bars, as well as the section's end
+            step: The note value of one step of a cell (default 1/16)
+            keep: Drum tracks that keep playing, such as a hi-hat on two and four
+            pitches: The MIDI note of a track that has no drum pattern here, such as a tom
+            velocity: How hard the fill is played
+
+        Example:
+            chorus.fill("tom run", beats=2, keep=("pedal",), pitches={"tom_high": 48})
+        """
+        beats = Fraction(beats).limit_denominator(96)
+        step = note_value_to_beats(step)
+        cells = fill_cells(fill, int(beats / step)) if isinstance(fill, str) else dict(fill)
+        for cell in cells.values():
+            read_cell(cell)  # report a mistake here rather than at compile time
+        self._fills.append(
+            Fill(
+                cells=cells,
+                beats=beats,
+                every=every,
+                step=step,
+                keep=list(keep),
+                pitches=dict(pitches or {}),
+                velocity=velocity,
+            )
+        )
+        return self
+
     def _to_ir(self) -> Section:
         """Convert to IR Section object."""
         return Section(
@@ -897,6 +949,7 @@ class SectionBuilder:
             tracks=[t._to_ir() for t in self._tracks],
             curves=list(self._curves),
             audio=list(self._audio),
+            fills=list(self._fills),
         )
 
 

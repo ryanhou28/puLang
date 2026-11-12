@@ -21,6 +21,18 @@ from pypulang.patterns import generate_pattern
 def _slot_records(
     slot: score.SlotOp, following: score.SlotOp | None, timeline: Timeline
 ) -> list[NoteRecord]:
+    """A slot's notes, less any that start where a drum fill has the slot rest."""
+    params = from_attr(slot.params)
+    silence = params.pop("silence", None)
+    records = _pattern_records(slot, following, timeline, params)
+    if not silence:
+        return records
+    return [r for r in records if not any(a <= r.start < b for a, b in silence)]
+
+
+def _pattern_records(
+    slot: score.SlotOp, following: score.SlotOp | None, timeline: Timeline, params: dict
+) -> list[NoteRecord]:
     if slot.kind.data in CONTEXT_PATTERNS:
         bar = timeline.bar_at(slot.start.data)
         section_start = bar.start - (bar.in_section - 1) * bar.meter.beats_per_bar
@@ -34,7 +46,7 @@ def _slot_records(
             start=slot.start.data,
             dur=slot.dur.data,
             section_offset=slot.start.data - section_start,
-            params=from_attr(slot.params),
+            params=params,
             octave=slot.octave.value.data,
             velocity=slot.velocity.value.data,
             seed=loc_key(slot.location),
@@ -52,7 +64,7 @@ def _slot_records(
             "octave_shift": slot.octave.value.data,
             "velocity": slot.velocity.value.data,
         },
-        pattern_params=from_attr(slot.params),
+        pattern_params=params,
     )
     return [NoteRecord(pitch, start, dur, vel) for pitch, start, dur, vel in events]
 
