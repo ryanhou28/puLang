@@ -30,11 +30,11 @@ _EDIT = {
         "level": {"type": "string", "enum": ["intent", "score"], "default": "intent"},
         "target": {
             "type": "string",
-            "description": 'Such as "chorus/harmony", "motif/hook", "verse/keys"',
+            "description": 'Such as "chorus/harmony", "motif/hook", "verse/keys", or "outro" for its tempo',
         },
         "field": {
             "type": "string",
-            "description": "chart, chord, notes, melody, pattern, voicing, octave, velocity, muted, pitches",
+            "description": "chart, chord, notes, melody, pattern, voicing, octave, velocity, muted, pitches, tempo",
         },
         "value": {
             "description": "The new value: text as the song writes it, or a number or boolean"

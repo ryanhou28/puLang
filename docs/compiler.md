@@ -106,6 +106,8 @@ changes what every track in that section plays, and nothing else has to be told.
 | `song.motif("hook", "5/8 6 1'/4 7/8 5/4.")` | A short idea in scale degrees, for melodies to develop. See [Motifs](#motifs). |
 | `track.melody("hook; hook +1; hook inv end 1")` | A melody as motifs: stated, sequenced, inverted, answered, fitted to the chords. |
 | `grid(cell="x..o..x.", pitch=36)` | Drums on a step grid, in any meter. |
+| `song.section("outro", bars=4, tempo=110)` | A section's own tempo. One without plays at the piece's, so it is back "a tempo". |
+| `outro.ritardando(to=96, bars=2)`, `.accelerando(...)`, `.fermata(4, beat=0, hold=3)` | The tempo moving inside a section. See [Tempo](#tempo). |
 | `section.fill("tom run", beats=2, keep=("pedal",))` | A drum fill at the section's end, or `every=4` bars. See [Fills](#fills). |
 | `hits(cell="x-.x-.x.")` | The voicing on a rhythm: stabs, pads, written-out comping. |
 | `riff(cell=..., degrees="1 5 b7 1'")` | A line in chord degrees, so it follows the changes. |
@@ -226,6 +228,21 @@ lanes as tracks: `snare`, `kick`, `tom_high`, `tom_low`, `crash`. A track that o
 fills, such as a tom, takes its note from `pitches`; any other takes the note of its own
 grid. A cell shorter than the fill is lined up with its end.
 
+## Tempo
+
+A section can have its own tempo, and the tempo can move inside it. A section with no tempo
+of its own plays at the piece's, so the one after a ritardando is back "a tempo".
+`ritardando(to, bars)` and `accelerando(to, bars)` move the tempo gradually over a section's
+last bars, or from `at`; `fermata(bar, beat, hold)` plays a beat `hold` times as long, and
+the music picks up after it where it would have been, inside a ritardando too.
+
+kaiDAW's tempo changes are steps, so a gradual change is written as a step every half beat,
+each at the tempo of its middle, which keeps its length what a smooth change would take.
+The whole map reaches kaiDAW's tempo map and MIDI files, and every time puLang reports, such
+as `describe`'s form or a render window, is read through it. A song whose tempo never moves
+has no tempo map in its IR and lowers exactly as before. A section's tempo is an intent edit,
+`verse` with field `tempo`, so a variation or an agent can try a section faster or slower.
+
 ## Voice leading
 
 A voicing strategy returns every arrangement of a chord that fits the register. It does not
@@ -304,6 +321,7 @@ were made at, as edits of the IR, and applied by a pass when the song compiles:
 
 | Level | Target | Fields | Reaches |
 |---|---|---|---|
+| intent | `verse` | `tempo` | the section's bpm; none plays it at the piece's tempo |
 | intent | `verse/harmony` | `chart` | the whole progression, as a chord chart; a short one loops |
 | intent | `verse/harmony@3+0` (the chord starting at bar 3, beat 0) | `chord` | every occurrence of the section |
 | intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern`, `melody` | every occurrence |
@@ -509,6 +527,8 @@ What exists and is tested:
 | Harmony | Chart symbols, altered tensions, slash bass, reharmonization, transposition |
 | Melody | Motifs in scale degrees, developed in phrases and fitted to the chords |
 | Performance | Swing, humanize, accent, pump, bend, lay-back, phrasing, legato, dynamics marks |
+| Tempo | Per-section tempo, ritardando, accelerando and fermatas, through to kaiDAW's tempo map and MIDI |
+| Drums | Grids, and fills at a section's end or every few bars |
 | kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
 | Editing above the notes | Intent and score edits kept at their level; `pulang serve` traces a DAW note up every level; hand edits read back as chords, voicings, octaves, velocity and mutes, each checked by lowering |
 | Variations | Alternatives as bundles of edits at a site, proposed, auditioned and picked; the source always one of them |

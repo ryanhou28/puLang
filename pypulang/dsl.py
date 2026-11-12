@@ -35,6 +35,7 @@ from pypulang.ir.intent import (
     Piece,
     Rack,
     Section,
+    TempoChange,
     TimeSignature,
     Track,
     TrackContent,
@@ -388,6 +389,13 @@ solo_line = PatternBuilder("solo_line")
 _NOTE_VALUE_PARAMS = ("rate", "hihat_rate", "step")
 
 
+def _bpm(value: float) -> float:
+    """A tempo, checked: puLang plays from 20 to 400 bpm."""
+    if not 20 <= float(value) <= 400:
+        raise ValueError(f"A tempo of {value} bpm is outside 20 to 400")
+    return float(value)
+
+
 def note_value_to_beats(value: Fraction | float | int | str) -> Fraction:
     """
     Convert a written note value to quarter-note beats, the unit of the IR.
@@ -674,6 +682,8 @@ class SectionBuilder:
         self._curves: list[Curve] = []
         self._audio: list[AudioPlacement] = []
         self._fills: list[Fill] = []
+        self._tempo: float | None = None
+        self._tempo_changes: list[TempoChange] = []
 
     @property
     def name(self) -> str:
@@ -826,6 +836,8 @@ class SectionBuilder:
             section._tracks.append(copied)
         section._curves = list(self._curves)
         section._fills = list(self._fills)
+        section._tempo = self._tempo
+        section._tempo_changes = list(self._tempo_changes)
         return section
 
     def automate(
@@ -938,6 +950,53 @@ class SectionBuilder:
         )
         return self
 
+    def _bar_beats(self) -> Fraction:
+        return (self._time_signature or self._piece._time_signature).beats_per_bar
+
+    def ritardando(self, to: float, bars: float = 2, at: float | None = None) -> SectionBuilder:
+        """
+        Slow down gradually to `to` bpm.
+
+        Args:
+            to: The bpm it arrives at, which holds to the section's end
+            bars: Over how many bars
+            at: The bar it starts in, counted from 1; default the last `bars` bars
+        """
+        return self._ramp(to, bars, at)
+
+    def accelerando(self, to: float, bars: float = 2, at: float | None = None) -> SectionBuilder:
+        """Speed up gradually to `to` bpm. Arguments as for `ritardando`."""
+        return self._ramp(to, bars, at)
+
+    def _ramp(self, to: float, bars: float, at: float | None) -> SectionBuilder:
+        span = Fraction(bars).limit_denominator(64)
+        first = Fraction(self._bars) - span + 1 if at is None else Fraction(at).limit_denominator(64)
+        if first < 1 or first - 1 + span > self._bars:
+            raise ValueError(f"{self._name}: a change over bars {first} to {first + span - 1} "
+                             f"does not fit in {self._bars} bars")
+        self._tempo_changes.append(
+            TempoChange("ramp", (first - 1) * self._bar_beats(), span * self._bar_beats(), _bpm(to))
+        )
+        return self
+
+    def fermata(self, bar: int, beat: float = 0, hold: float = 2, beats: float = 1) -> SectionBuilder:
+        """
+        Hold a moment: the `beats` from `beat` of `bar` last `hold` times as long.
+
+        Args:
+            bar: Bar counted from 1
+            beat: Quarter notes into the bar
+            hold: How many times longer, such as 2 or 3
+            beats: How long the held moment is, in quarter notes
+        """
+        if hold <= 0:
+            raise ValueError("A fermata holds a moment longer: `hold` must be above 0")
+        at = (bar - 1) * self._bar_beats() + Fraction(beat).limit_denominator(64)
+        self._tempo_changes.append(
+            TempoChange("hold", at, Fraction(beats).limit_denominator(64), float(hold))
+        )
+        return self
+
     def _to_ir(self) -> Section:
         """Convert to IR Section object."""
         return Section(
@@ -950,6 +1009,8 @@ class SectionBuilder:
             curves=list(self._curves),
             audio=list(self._audio),
             fills=list(self._fills),
+            tempo=self._tempo,
+            tempo_changes=list(self._tempo_changes),
         )
 
 
@@ -1000,6 +1061,7 @@ class PieceBuilder:
         bars: int,
         key: str | Key | None = None,
         time_sig: str | TimeSignature | None = None,
+        tempo: float | None = None,
     ) -> SectionBuilder:
         """
         Create a section in this piece.
@@ -1009,6 +1071,8 @@ class PieceBuilder:
             bars: Length in bars
             key: Override key for this section (optional)
             time_sig: Override time signature (optional)
+            tempo: This section's bpm. A section with none plays at the piece's
+                tempo, so the one after a ritardando is back "a tempo".
         """
         section_key = None
         if key is not None:
@@ -1027,6 +1091,7 @@ class PieceBuilder:
             key=section_key,
             time_signature=section_time_sig,
         )
+        section._tempo = _bpm(tempo) if tempo is not None else None
         self._sections.append(section)
         return section
 

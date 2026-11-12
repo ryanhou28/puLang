@@ -11,6 +11,7 @@ Each edit names its target the way locations do, by musical position:
     level   target                       field
     intent  "verse/harmony@3+0"          chord      the chord starting at bar 3, beat 0
     intent  "verse/harmony"              chart      the whole progression, as a chord chart
+    intent  "verse"                      tempo      the section's bpm, or None for the piece's
     intent  "verse/keys"                 voicing | octave | velocity | muted | pattern
     intent  "verse/lead"                 melody     the phrase: which motifs, developed how
     intent  "motif/hook"                 notes      a motif, changed everywhere it is used
@@ -37,6 +38,7 @@ from pypulang.compiler.dialects import intent, score
 from pypulang.compiler.dialects.mus import (
     ChordAttr,
     RationalAttr,
+    float_attr,
     format_rational,
     from_attr,
     to_attr,
@@ -231,6 +233,10 @@ def current_value(module: ModuleOp, edit: Edit) -> tuple[bool, Any]:
         return edit.field == "chart" and section.harmony() is not None, section_chart(
             section, piece
         )
+    if rest == "":
+        if edit.field != "tempo":
+            return False, None
+        return True, float(section.tempo.value.data) if section.tempo is not None else None
     track = next((t for t in section.tracks() if t.track.data == rest), None)
     if track is None:
         return False, None
@@ -276,6 +282,13 @@ class ApplyIntentEdits(ModulePass):
                 harmony.properties["chords"] = type(harmony.chords)(chords)
             elif rest == "harmony":
                 _set_chart(section, piece, str(edit.value))
+            elif rest == "":
+                if edit.value in (None, ""):
+                    section.properties.pop("tempo", None)
+                else:
+                    if not 20 <= float(edit.value) <= 400:
+                        raise ValueError(f"A tempo of {edit.value} bpm is outside 20 to 400")
+                    section.properties["tempo"] = float_attr(float(edit.value))
             else:
                 track = next(t for t in section.tracks() if t.track.data == rest)
                 _set_track(track, edit.field, edit.value)

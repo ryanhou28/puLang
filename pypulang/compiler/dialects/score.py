@@ -75,6 +75,9 @@ class ScoreOp(IRDLOperation):
     def chords(self) -> list[ChordOp]:
         return [op for op in self.body.block.ops if isinstance(op, ChordOp)]
 
+    def tempos(self) -> list[TempoOp]:
+        return [op for op in self.body.block.ops if isinstance(op, TempoOp)]
+
 
 @irdl_op_definition
 class SectionOp(IRDLOperation):
@@ -122,6 +125,22 @@ class SectionOp(IRDLOperation):
     @property
     def tag(self) -> str:
         return f"{self.section.data}#{self.occurrence.value.data}"
+
+
+@irdl_op_definition
+class TempoOp(IRDLOperation):
+    """
+    The tempo from `at` beats on, until the next. Present only when a song's tempo
+    moves; otherwise the score's own tempo holds throughout.
+    """
+
+    name = "score.tempo"
+    at = prop_def(RationalAttr)
+    bpm = prop_def(FloatAttr)
+    assembly_format = "$bpm `at` $at attr-dict"
+
+    def __init__(self, at: Fraction, bpm: float):
+        super().__init__(properties={"at": RationalAttr(at), "bpm": float_attr(bpm)})
 
 
 @irdl_op_definition
@@ -349,4 +368,6 @@ class NoteOp(IRDLOperation):
         return cls(pitch, voice, beat, dur, vel, dynamic, articulation)
 
 
-ScoreDialect = Dialect("score", [ScoreOp, SectionOp, ChordOp, PartOp, SlotOp, BarOp, NoteOp], [])
+ScoreDialect = Dialect(
+    "score", [ScoreOp, SectionOp, TempoOp, ChordOp, PartOp, SlotOp, BarOp, NoteOp], []
+)

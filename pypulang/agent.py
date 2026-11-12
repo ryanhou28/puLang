@@ -40,6 +40,7 @@ from pypulang.backends.kaidaw.state import Overrides, SongState
 from pypulang.compiler.dialects import event, intent
 from pypulang.compiler.edits import LEVELS, Edit, current_value, section_chart, track_value
 from pypulang.compiler.pipeline import CompileResult
+from pypulang.compiler.tempo import seconds_at, stream_points
 from pypulang.songfile import Song, load_song
 from pypulang.variations import SOURCE, Variation, effect, focus, sites, song_edits
 
@@ -75,8 +76,10 @@ def _clock(seconds: float) -> str:
     return f"{int(seconds // 60)}:{seconds % 60:04.1f}"
 
 
-def _tempo(result: CompileResult) -> float:
-    return float(_top(result.stages["intent"], intent.PieceOp).tempo.value.data)
+def _clock_of(result: CompileResult):
+    """Beats to seconds through the song's tempo map."""
+    points = stream_points(result.stages["event"])
+    return lambda beat: seconds_at(beat, points)
 
 
 # -- reading ---------------------------------------------------------------------------
@@ -86,25 +89,25 @@ def describe(song: str) -> dict[str, Any]:
     """
     The song in one read.
 
-    Times assume the piece's one tempo. Bars count from 1 across the whole song.
+    Times follow the tempo map. Bars count from 1 across the whole song.
     """
     loaded, _, overrides = _song(song)
     result = loaded.compile(until="event")
     piece = _top(result.stages["intent"], intent.PieceOp)
     stream = _top(result.stages["event"], event.StreamOp)
     tempo = float(piece.tempo.value.data)
-    per_beat = 60.0 / tempo
+    clock = _clock_of(result)
 
     form = []
     bar = 1
     for marker in stream.sections():
         bars = int(marker.length.data / marker.meter.data.beats_per_bar)
-        start = float(marker.at.data) * per_beat
+        start, end = clock(marker.at.data), clock(marker.at.data + marker.length.data)
         form.append(
             {
                 "section": marker.tag.data,
                 "bars": f"{bar}-{bar + bars - 1}",
-                "time": f"{_clock(start)}-{_clock(start + float(marker.length.data) * per_beat)}",
+                "time": f"{_clock(start)}-{_clock(end)}",
             }
         )
         bar += bars
@@ -135,17 +138,29 @@ def describe(song: str) -> dict[str, Any]:
             "key": f"{key.root} {key.mode}",
             "meter": f"{meter.numerator}/{meter.denominator}",
             "chart": section_chart(section, piece),
+            "tempo": float(section.tempo.value.data) if section.tempo is not None else tempo,
+            "tempo_changes": [
+                {
+                    "kind": {"ramp": "ritardando or accelerando", "hold": "fermata"}[c.kind.data],
+                    "at_beat": c.at.data,
+                    "beats": c.length.data,
+                    "to_bpm" if c.kind.data == "ramp" else "times_longer": float(
+                        c.value.value.data
+                    ),
+                }
+                for c in section.tempo_changes()
+            ],
             "tracks": tracks,
         }
 
-    end = max((float(s.at.data + s.length.data) for s in stream.sections()), default=0.0)
+    end = max((s.at.data + s.length.data for s in stream.sections()), default=Fraction(0))
     return plain(
         {
             "title": piece.title.data,
             "tempo": tempo,
             "key": f"{piece.key.data.root} {piece.key.data.mode}",
             "meter": f"{piece.meter.data.numerator}/{piece.meter.data.denominator}",
-            "length": _clock(end * per_beat),
+            "length": _clock(clock(end)),
             "form": form,
             "motifs": piece.motifs(),
             "sections": sections,
@@ -333,7 +348,7 @@ def edit(song: str, target: str, field: str, value: Any, level: str = "intent") 
     Change one thing above the notes and keep the change beside the song.
 
     Targets name places by musical position, as `pypulang.compiler.edits` lists:
-    "verse/harmony" chart, "verse/harmony@3+0" chord, "verse/keys" voicing |
+    "verse" tempo, "verse/harmony" chart, "verse/harmony@3+0" chord, "verse/keys" voicing |
     octave | velocity | muted | pattern | melody, "motif/hook" notes,
     "verse#2/harmony@3+0" chord at the score level, "verse#2/keys/c4" pitches.
     """
@@ -547,7 +562,7 @@ def render(
     loaded, _, overrides = _song(song)
     edits = song_edits(overrides)
     result = loaded.compile(until="event", edits=edits)
-    per_beat = 60.0 / _tempo(result)
+    clock = _clock_of(result)
     starts = _bar_starts(result)
     if section is not None:
         stream = _top(result.stages["event"], event.StreamOp)
@@ -563,9 +578,7 @@ def render(
         end = starts[min(start_bar - 1 + bars, len(starts) - 1)]
     else:
         begin, end = Fraction(0), starts[-1] + Fraction(4)
-    return _bounce(
-        loaded, edits, Path(out), float(begin) * per_beat, float(end - begin) * per_beat, port
-    )
+    return _bounce(loaded, edits, Path(out), clock(begin), clock(end) - clock(begin), port)
 
 
 def audition(
@@ -582,7 +595,6 @@ def audition(
     if not found:
         raise ToolError(f"No variations at {site!r}")
     source = loaded.compile(edits=song_edits(overrides, site=site))
-    tempo = _tempo(source)
     effects = {
         v.name: effect(source, loaded.compile(edits=song_edits(overrides, trying=v))) for v in found
     }
@@ -594,10 +606,16 @@ def audition(
     occurrence = next((s for s in stream.sections() if s.tag.data == tag), None)
     if occurrence is None:
         raise ToolError(f"No section occurrence {tag!r}; the form is {order}")
-    bar = float(occurrence.meter.data.beats_per_bar)
-    begin = max(0.0, float(occurrence.at.data) - bar)
-    end = float(occurrence.at.data + occurrence.length.data)
-    start, seconds = begin * 60.0 / tempo, (end - begin) * 60.0 / tempo + 1.0
+    begin = max(Fraction(0), occurrence.at.data - occurrence.meter.data.beats_per_bar)
+    end = occurrence.at.data + occurrence.length.data
+
+    def seconds_of(edits: list[Edit]) -> tuple[float, float]:
+        # The same bars for every take, timed by each take's own tempo map, since
+        # a variation may change the tempo too.
+        clock = _clock_of(loaded.compile(until="event", edits=edits))
+        return clock(begin), clock(end) - clock(begin) + 1.0
+
+    start, seconds = seconds_of(song_edits(overrides, site=site))
     out = Path(out_dir)
     renders = {
         SOURCE: _bounce(
@@ -606,15 +624,9 @@ def audition(
     }
     try:
         for variation in found:
+            edits = song_edits(overrides, trying=variation)
             renders[variation.name] = {
-                **_bounce(
-                    loaded,
-                    song_edits(overrides, trying=variation),
-                    out / f"{variation.name}.wav",
-                    start,
-                    seconds,
-                    port,
-                ),
+                **_bounce(loaded, edits, out / f"{variation.name}.wav", *seconds_of(edits), port),
                 "effect": effects[variation.name].summary(),
                 "description": variation.description,
             }

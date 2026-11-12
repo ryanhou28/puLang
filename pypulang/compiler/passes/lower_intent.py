@@ -21,6 +21,7 @@ from pypulang.compiler.dialects import daw, event, intent, score
 from pypulang.compiler.dialects.mus import from_attr, to_attr
 from pypulang.compiler.locs import in_section, loc_key
 from pypulang.compiler.notes import NoteRecord, add_notes
+from pypulang.compiler.tempo import section_points, tidy
 from pypulang.compiler.timeline import Timeline
 from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.ir.intent import Chord, Key, TimeSignature
@@ -281,6 +282,28 @@ def _fills(
     return windows, keep, records
 
 
+def _tempo_map(piece: intent.PieceOp, occurrences: list[_Occurrence]) -> list[score.TempoOp]:
+    """
+    The song's tempo points, or none when it keeps the piece's tempo throughout,
+    so a song whose tempo never moves lowers exactly as it always has.
+    """
+    moves = any(o.op.tempo is not None or o.op.tempo_changes() for o in occurrences)
+    if not moves:
+        return []
+    piece_tempo = float(piece.tempo.value.data)
+    points: list[tuple[Fraction, float]] = []
+    for occurrence in occurrences:
+        op, marker = occurrence.op, occurrence.marker
+        base = float(op.tempo.value.data) if op.tempo is not None else piece_tempo
+        changes = [
+            (c.kind.data, c.at.data, c.length.data, float(c.value.value.data))
+            for c in op.tempo_changes()
+        ]
+        points.extend(section_points(marker.start.data, marker.length, base, changes))
+    end = occurrences[-1].marker.start.data + occurrences[-1].marker.length
+    return [score.TempoOp(at, bpm) for at, bpm in tidy(points, end)]
+
+
 def _chord_timeline(occurrences: list[_Occurrence]) -> list[score.ChordOp]:
     timeline = []
     for occurrence in occurrences:
@@ -397,6 +420,7 @@ class LowerIntentToScore(ModulePass):
             [
                 *racks,
                 *[o.marker for o in occurrences],
+                *_tempo_map(piece, occurrences),
                 *_chord_timeline(occurrences),
                 *parts.values(),
             ],

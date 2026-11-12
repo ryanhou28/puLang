@@ -161,6 +161,8 @@ class Companion:
         if edit.field == "melody":
             parse_phrase(text)
             return text
+        if edit.field == "tempo":
+            return float(text) if text else None
         if edit.field == "chart":
             parse_chart(text, Key("C", "major"))  # the symbols must read; the key comes later
             return text

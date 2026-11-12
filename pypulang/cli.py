@@ -168,12 +168,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def _seconds(song: Song) -> float:
-    """How long a piece runs, from its section markers and first tempo."""
+    """How long a piece runs, from its section markers and its tempo map."""
+    from pypulang.compiler.tempo import seconds_at, stream_points
+
     module = song.compile(until="event").stages["event"]
     stream = next(o for o in module.body.block.ops if isinstance(o, event_dialect.StreamOp))
     end = max((s.at.data + s.length.data for s in stream.sections()), default=Fraction(0))
-    bpm = stream.tempos()[0].bpm.value.data
-    return float(end) * 60 / bpm
+    return seconds_at(end, stream_points(module))
 
 
 def cmd_render(args: argparse.Namespace) -> int:

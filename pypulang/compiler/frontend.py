@@ -75,12 +75,18 @@ def _section_op(section: Section) -> intent.SectionOp:
         )
         fill_op.location = name_loc(f"{section.name}/fill{index}")
         fills.append(fill_op)
+    tempos = []
+    for index, change in enumerate(section.tempo_changes):
+        tempo_op = intent.TempoOp(change.kind, change.at, change.length, change.value)
+        tempo_op.location = name_loc(f"{section.name}/tempo{index}")
+        tempos.append(tempo_op)
     op = intent.SectionOp(
         section.name,
         section.bars,
         section.key,
         section.time_signature,
-        [harmony, *tracks, *curves, *audio, *fills],
+        [harmony, *tracks, *curves, *audio, *fills, *tempos],
+        tempo=section.tempo,
     )
     op.location = name_loc(section.name)
     return op

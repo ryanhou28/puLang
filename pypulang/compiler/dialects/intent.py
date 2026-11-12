@@ -115,10 +115,12 @@ class SectionOp(IRDLOperation):
     bars = prop_def(IntegerAttr)
     key = opt_prop_def(KeyAttr)
     meter = opt_prop_def(MeterAttr)
+    tempo = opt_prop_def(FloatAttr)
     body = region_def("single_block")
     traits = traits_def(NoTerminator())
     assembly_format = (
-        "$section `bars` $bars (`key` $key^)? (`meter` $meter^)? attr-dict-with-keyword $body"
+        "$section `bars` $bars (`key` $key^)? (`meter` $meter^)? (`tempo` $tempo^)? "
+        "attr-dict-with-keyword $body"
     )
 
     def __init__(
@@ -128,6 +130,7 @@ class SectionOp(IRDLOperation):
         key: Key | None,
         meter: TimeSignature | None,
         ops: Sequence[IRDLOperation],
+        tempo: float | None = None,
     ):
         props: dict[str, Attribute] = {
             "section": StringAttr(section),
@@ -137,6 +140,8 @@ class SectionOp(IRDLOperation):
             props["key"] = KeyAttr(key)
         if meter is not None:
             props["meter"] = MeterAttr(meter)
+        if tempo is not None:
+            props["tempo"] = float_attr(tempo)
         super().__init__(properties=props, regions=[Region(Block(ops))])
 
     def harmony(self) -> HarmonyOp | None:
@@ -156,6 +161,9 @@ class SectionOp(IRDLOperation):
 
     def fills(self) -> list[FillOp]:
         return [op for op in self.body.block.ops if isinstance(op, FillOp)]
+
+    def tempo_changes(self) -> list[TempoOp]:
+        return [op for op in self.body.block.ops if isinstance(op, TempoOp)]
 
 
 @irdl_op_definition
@@ -335,6 +343,33 @@ class NoteOp(IRDLOperation):
 
 
 @irdl_op_definition
+class TempoOp(IRDLOperation):
+    """
+    A change of tempo inside a section, `at` beats from its start.
+
+    "ramp" moves to `value` bpm over `length` beats; "hold" plays the `length`
+    beats from `at` `value` times as long.
+    """
+
+    name = "intent.tempo"
+    kind = prop_def(StringAttr)
+    at = prop_def(RationalAttr)
+    length = prop_def(RationalAttr)
+    value = prop_def(FloatAttr)
+    assembly_format = "$kind `at` $at `for` $length `to` $value attr-dict"
+
+    def __init__(self, kind: str, at: Fraction, length: Fraction, value: float):
+        super().__init__(
+            properties={
+                "kind": StringAttr(kind),
+                "at": RationalAttr(Fraction(at)),
+                "length": RationalAttr(Fraction(length)),
+                "value": float_attr(value),
+            }
+        )
+
+
+@irdl_op_definition
 class FillOp(IRDLOperation):
     """
     A drum fill at the end of a section, or of every `every` bars.
@@ -467,6 +502,7 @@ IntentDialect = Dialect(
         CurveOp,
         AudioOp,
         FillOp,
+        TempoOp,
     ],
     [HarmonyType],
 )

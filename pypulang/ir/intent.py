@@ -598,6 +598,26 @@ class AudioPlacement:
 
 
 @dataclass
+class TempoChange:
+    """
+    A change of tempo inside a section.
+
+    Attributes:
+        kind: "ramp", a gradual change to `value` bpm over `length` beats (a
+            ritardando or accelerando); or "hold", the `length` beats starting at
+            `at` played `value` times as long (a fermata)
+        at: Beats from the section's start
+        length: Beats
+        value: The bpm a ramp reaches, or how many times longer a hold lasts
+    """
+
+    kind: str
+    at: Fraction
+    length: Fraction
+    value: float
+
+
+@dataclass
 class Fill:
     """
     A drum fill: the last `beats` of a section, or of every `every` bars, played as
@@ -682,6 +702,8 @@ class Section:
     curves: list[Curve] = field(default_factory=list)
     audio: list[AudioPlacement] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
+    tempo: float | None = None
+    tempo_changes: list[TempoChange] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
