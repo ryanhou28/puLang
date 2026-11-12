@@ -115,7 +115,7 @@ Passes run where you ask, through a song's `pipeline`:
 | Stage | Passes |
 |---|---|
 | `intent` | `Reharmonize` (tritone_sub, jazzify, modal_interchange, secondary_dominants), `Transpose` |
-| `event` | `Swing`, `Humanize`, `Accent`, `Pump`, `Bend` |
+| `event` | `Swing`, `Humanize`, `Accent`, `Pump`, `Bend`, `LayBack`, `Phrasing`, `Legato`, `Dynamics` |
 
 `Pump` ducks a track's fader on every hit of another. It makes the sidechain sound from a
 volume curve, so it needs no routing.
@@ -124,6 +124,15 @@ volume curve, so it needs no routing.
 `fall` off its end. Bends go in the clip's pitch-bend lane, which every instrument hears and a
 person can redraw in the DAW, and each clip's lane is returned to rest before it ends. Run it
 after `Humanize`, so the bends follow the notes where they landed.
+
+The feel of a band is mostly where each player sits and how they shape a line. `LayBack`
+plays a track a constant number of ticks behind the beat (or ahead, negative): a bass on the
+beat and a lead 20 ticks behind sounds unhurried. `Phrasing` treats each run of notes between
+rests as a phrase and shapes its velocity, rising to its highest note and letting go after
+it, with the last note softest. `Legato` holds each note until the next begins, a few ticks
+into it so a synth with glide slides, and leaves real rests alone. `Dynamics` gives each
+section a mark, `pp` to `ff`, or a swell such as `p<f` that builds across the section;
+`mf` leaves velocities as written.
 
 A section's time signature and name reach kaiDAW too: its meter map shows 7/8 where the source
 says 7/8, and every section occurrence is a marker.
@@ -388,7 +397,7 @@ What exists and is tested:
 | Voicing | Seven strategies and exact voice leading |
 | Harmony | Chart symbols, altered tensions, slash bass, reharmonization, transposition |
 | Melody | Motifs in scale degrees, developed in phrases and fitted to the chords |
-| Performance | Swing, humanize, accent, pump, bend |
+| Performance | Swing, humanize, accent, pump, bend, lay-back, phrasing, legato, dynamics marks |
 | kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
 | Editing above the notes | Intent and score edits kept at their level; `pulang serve` traces a DAW note up every level; hand edits read back as chords, voicings, octaves, velocity and mutes, each checked by lowering |
 | Audio | Files on tracks per section, and samplers with files on keys, imported into kaiDAW's pool |
