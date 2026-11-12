@@ -14,7 +14,7 @@ comes back a semitone up and broadens into a short outro that slows to a stop.
 
 from pypulang import *
 from pypulang.compiler.passes.perform import Dynamics, Humanize, LayBack, Legato, Phrasing
-from pypulang.sounds import FUSION_GAINS, sampler
+from pypulang.sounds import FUSION_GAINS, eq, sampler
 from pypulang.sounds.instruments import sampled
 
 KICK, SNARE, XSTICK, PEDAL, RIDE, CRASH = 36, 38, 37, 44, 51, 49
@@ -92,10 +92,12 @@ with piece(tempo=78, key="F minor", title="Lantern Rain") as song:
     verb.params.update({"Room Size": 0.7, "Dry Level": 0.0, "Wet Level": 0.5})
     song.rack("verb", verb, volume=0.7)
 
+    # The mute's loud recordings are bright: a shelf takes the edge off above 2.5 kHz.
     song.rack(
         "trumpet",
         sampled("horn", "muted_trumpet", gain_db=5),
-        volume=0.74,
+        eq(high=(2500, -7)),
+        volume=0.8,
         pan=0.05,
         sends={"verb": 0.3},
     )
@@ -171,7 +173,7 @@ with piece(tempo=78, key="F minor", title="Lantern Rain") as song:
     # --- Chorus: the hook over the falling roots -----------------------------
     chorus = song.section("chorus", bars=8)
     chorus.chart(CHORUS_CHART)
-    chorus.track("trumpet", role=Role.MELODY).melody(CHORUS_LINE, low=63, high=84)
+    chorus.track("trumpet", role=Role.MELODY).melody(CHORUS_LINE, low=63, high=84).velocity(84)
     band(chorus, piano=0.55, bass_cell="x-------x---x---", piano_velocity=76)
     strings(chorus, velocity=76, low=52, high=86)
     drum(chorus, "ride", "x...x.x.x...x.x.", RIDE, 70)

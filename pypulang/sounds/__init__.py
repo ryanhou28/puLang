@@ -37,6 +37,7 @@ __all__ = [
     "fusion_drums",
     "fusion_rack",
     "future_bass_rack",
+    "eq",
     "surge",
 ]
 
@@ -79,6 +80,48 @@ def sampler(
         spec.setdefault("one_shot", one_shot)
         specs.append(spec)
     return Device(name=name, identifier="sampler", params={}, sounds=specs)
+
+
+# Tracktion's four-band EQ: each band's parameter names, and the ranges its
+# normalised values span (linearly) in Hz, dB and Q.
+_EQ_BANDS = {
+    "low": ("Low-shelf freq", "Low-shelf gain", "Low-shelf Q"),
+    "mid": ("Mid freq 1", "Mid gain 1", "Mid Q 1"),
+    "mid2": ("Mid freq 2", "Mid gain 2", "Mid Q 2"),
+    "high": ("High-shelf freq", "High-shelf gain", "High-shelf Q"),
+}
+_EQ_RANGES = ((20.0, 20000.0), (-20.0, 20.0), (0.1, 4.0))
+
+
+def eq(
+    name: str = "eq",
+    *,
+    low: tuple[float, ...] | None = None,
+    mid: tuple[float, ...] | None = None,
+    mid2: tuple[float, ...] | None = None,
+    high: tuple[float, ...] | None = None,
+) -> Device:
+    """
+    kaiDAW's four-band EQ in Hz and dB: a shelf at each end and two peaks between.
+
+    Each band is (hz, db) or (hz, db, q); a band not given stays flat.
+
+    Example:
+        song.rack("trumpet", sampled("horn", "muted_trumpet"), eq(high=(3000, -5)))
+    """
+    params: dict[str, float] = {}
+    for band, setting in (("low", low), ("mid", mid), ("mid2", mid2), ("high", high)):
+        if setting is None:
+            continue
+        if len(setting) not in (2, 3):
+            raise ValueError(f"eq {band}: give (hz, db) or (hz, db, q), not {setting!r}")
+        for param, value, (lo, hi), unit in zip(
+            _EQ_BANDS[band], setting, _EQ_RANGES, ("Hz", "dB", "Q"), strict=False
+        ):
+            if not lo <= value <= hi:
+                raise ValueError(f"eq {band}: {value} {unit} is outside {lo:g} to {hi:g}")
+            params[param] = (value - lo) / (hi - lo)
+    return Device(name=name, identifier="4bandEq", params=params)
 
 
 # Sampled drums' gains in dB, set so each sits where its Surge stand-in did: the
