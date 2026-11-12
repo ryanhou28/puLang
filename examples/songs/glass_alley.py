@@ -20,6 +20,9 @@ from pypulang.sounds import FUSION_GAINS, sampler
 from pypulang.sounds.instruments import sampled
 
 KICK, SNARE, XSTICK, PEDAL, RIDE, BELL, CRASH = 36, 38, 37, 44, 51, 53, 49
+TOM_HIGH, TOM_LOW = 50, 45
+# Where each drum the fills name sits, for sections where it keeps no time
+KIT_NOTES = {"snare": SNARE, "kick": KICK, "tom_high": TOM_HIGH, "tom_low": TOM_LOW, "crash": CRASH}
 KIT = "samples/jazz"
 
 # The lead's ideas, in degrees of D minor. "#7" is the harmonic minor's C#.
@@ -68,6 +71,13 @@ def band(section, piano=0.4, walk=True):
         section.track("bass", role=Role.BASS).pattern(
             riff(cell="x.......x.......", degrees="1 5", base=38, gate=0.9)
         ).velocity(96)
+
+
+def fill(section, name, beats, every=None, velocity=96):
+    """A drum fill; the hi-hat foot keeps time through it, as a drummer's would."""
+    section.fill(
+        name, beats=beats, every=every, keep=("pedal",), pitches=KIT_NOTES, velocity=velocity
+    )
 
 
 def brass(section, cell, velocity=96):
@@ -126,6 +136,8 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
         ("snare", "snare.wav", SNARE, FUSION_GAINS["snare"], 0.55),
         ("xstick", "cross-stick.wav", XSTICK, FUSION_GAINS["snare"], 0.5),
         ("crash", "crash.wav", CRASH, FUSION_GAINS["ride"], 0.5),
+        ("tom_high", "tom-high.wav", TOM_HIGH, FUSION_GAINS["snare"] - 1, 0.5),
+        ("tom_low", "tom-low.wav", TOM_LOW, FUSION_GAINS["snare"] - 1, 0.5),
     ]:
         song.rack(name, sampler("kit", {key: f"{KIT}/{file}"}, gain_db=gain_db), volume=volume)
 
@@ -141,6 +153,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     drum(intro, "ride", RIDE_TIME, RIDE, 72)
     drum(intro, "pedal", TWO_FOUR, PEDAL, 70)
     drum(intro, "crash", "x" + "." * 63, CRASH, 90)
+    fill(intro, "setup", beats=1)
 
     # --- Verse: the line cliché under a sung idea ----------------------------
     verse = song.section("verse", bars=8)
@@ -151,6 +164,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     drum(verse, "pedal", TWO_FOUR, PEDAL, 66)
     drum(verse, "xstick", "............x...", XSTICK, 58)
     drum(verse, "kick", "x.......x.......", KICK, 44)
+    fill(verse, "setup", beats=1, every=4, velocity=80)
 
     # --- Pre-chorus: a climb, strings swelling under it ----------------------
     pre = song.section("pre", bars=4)
@@ -172,6 +186,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
         70,
     )
     drum(pre, "kick", "x.......x.......", KICK, 60)
+    fill(pre, "tom run", beats=2)
 
     # --- Chorus: the hook, the band answering --------------------------------
     chorus = song.section("chorus", bars=8)
@@ -189,6 +204,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     drum(chorus, "snare", "....x.......x...", SNARE, 64)
     drum(chorus, "kick", "x.....x...x.....", KICK, 66)
     drum(chorus, "crash", "x" + "." * 127, CRASH, 96)
+    fill(chorus, "snare roll", beats=1, every=4, velocity=90)
 
     # --- Break: stop time ----------------------------------------------------
     brk = song.section("brk", bars=2)
@@ -222,6 +238,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     drum(verse2, "pedal", TWO_FOUR, PEDAL, 70)
     drum(verse2, "snare", "......o. ...o.... ........ ..o...o.", SNARE, 54)
     drum(verse2, "kick", "x.......x.......", KICK, 50)
+    fill(verse2, "setup", beats=1, every=4, velocity=84)
 
     # --- Bridge: half time, strings and vibes, rising to the key change ------
     bridge = song.section("bridge", bars=8)
@@ -239,6 +256,8 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     drum(bridge, "ride", "x.......x.......", RIDE, 62)
     drum(bridge, "pedal", TWO_FOUR, PEDAL, 60)
     drum(bridge, "kick", "x...............", KICK, 52)
+    # A whole bar down the kit into the key change
+    fill(bridge, "tom run", beats=4, velocity=100)
 
     # --- Last chorus, a semitone up ------------------------------------------
     chorus_up = chorus.transform("chorus_up", transpose=1)
@@ -263,7 +282,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     song.form([intro, verse, pre, chorus, brk, verse2, pre, chorus, bridge, chorus_up, outro])
 
 LEADS = ("trumpet", "sax")
-DRUMS = ("ride", "bell", "pedal", "kick", "snare", "xstick", "crash")
+DRUMS = ("ride", "bell", "pedal", "kick", "snare", "xstick", "crash", "tom_high", "tom_low")
 
 pipeline = {
     "event": [
