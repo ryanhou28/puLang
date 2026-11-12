@@ -258,6 +258,8 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     drum(bridge, "kick", "x...............", KICK, 52)
     # A whole bar down the kit into the key change
     fill(bridge, "tom run", beats=4, velocity=100)
+    # ...and the band broadens under it, so the key change lands with weight.
+    bridge.ritardando(to=112, bars=1)
 
     # --- Last chorus, a semitone up ------------------------------------------
     chorus_up = chorus.transform("chorus_up", transpose=1)
@@ -265,6 +267,8 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     # --- Outro: the hook slowed, and home ------------------------------------
     outro = song.section("outro", bars=4, key="Eb minor")
     outro.chart("Bmaj7 | Bb7alt | Ebm(maj9) | %")
+    # Slowing into the last chord, then holding it.
+    outro.ritardando(to=96, bars=2, at=2).fermata(4, hold=1.5, beats=4)
     outro.track("trumpet", role=Role.MELODY).melody("hook first 5 x2; home", low=64, high=81)
     outro.track("piano", role=Role.HARMONY).pattern(hits(cell="x---------------")).voicing(
         "rootless", 52, 72
