@@ -10,6 +10,7 @@ Each edit names its target the way locations do, by musical position:
 
     level   target                       field
     intent  "verse/harmony@3+0"          chord      the chord starting at bar 3, beat 0
+    intent  "verse/harmony"              chart      the whole progression, as a chord chart
     intent  "verse/keys"                 voicing | octave | velocity | muted | pattern
     intent  "verse/lead"                 melody     the phrase: which motifs, developed how
     intent  "motif/hook"                 notes      a motif, changed everywhere it is used
@@ -33,10 +34,16 @@ from xdsl.dialects.builtin import IntegerAttr, ModuleOp, StringAttr, i64
 from xdsl.passes import ModulePass
 
 from pypulang.compiler.dialects import intent, score
-from pypulang.compiler.dialects.mus import ChordAttr, format_rational, from_attr, to_attr
+from pypulang.compiler.dialects.mus import (
+    ChordAttr,
+    RationalAttr,
+    format_rational,
+    from_attr,
+    to_attr,
+)
 from pypulang.compiler.locs import loc_key
 from pypulang.compiler.passes.lower_intent import _chord_spans
-from pypulang.harmony import chord_symbol, parse_chord_symbol
+from pypulang.harmony import chart_changes, chart_text, chord_symbol, parse_chord_symbol
 from pypulang.ir.intent import Key, TimeSignature
 from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.resolution import resolve_chord
@@ -98,6 +105,28 @@ def _parse_target(target: str) -> tuple[str, int | None, str]:
     head, _, rest = target.partition("/")
     name, hash_, occurrence = head.partition("#")
     return name, int(occurrence) if hash_ else None, rest
+
+
+def section_chart(section: intent.SectionOp, piece: intent.PieceOp) -> str:
+    """A section's harmony as a chord chart, as `chart` edits carry it."""
+    harmony = section.harmony()
+    if harmony is None:
+        return ""
+    meter = section.meter.data if section.meter is not None else piece.meter.data
+    changes = harmony.changes()
+    if harmony.unit.data != "bars":
+        changes = [(c, d / meter.beats_per_bar) for c, d in changes]
+    return chart_text(changes, _section_key(piece, section))
+
+
+def _set_chart(section: intent.SectionOp, piece: intent.PieceOp, chart: str) -> None:
+    harmony = section.harmony()
+    if harmony is None:
+        raise ValueError("this section has no harmony to change")
+    changes = chart_changes(chart, _section_key(piece, section), section.bars.value.data)
+    harmony.properties["chords"] = type(harmony.chords)([ChordAttr(c) for c, _ in changes])
+    harmony.properties["durations"] = type(harmony.durations)([RationalAttr(d) for _, d in changes])
+    harmony.properties["unit"] = StringAttr("bars")
 
 
 def chord_starts(section: intent.SectionOp, piece_meter: TimeSignature) -> dict[str, int]:
@@ -198,6 +227,10 @@ def current_value(module: ModuleOp, edit: Edit) -> tuple[bool, Any]:
             return False, None
         chord = section.harmony().changes()[index][0]
         return True, chord_symbol(chord, _section_key(piece, section))
+    if rest == "harmony":
+        return edit.field == "chart" and section.harmony() is not None, section_chart(
+            section, piece
+        )
     track = next((t for t in section.tracks() if t.track.data == rest), None)
     if track is None:
         return False, None
@@ -241,6 +274,8 @@ class ApplyIntentEdits(ModulePass):
                     parse_chord_symbol(str(edit.value), _section_key(piece, section))
                 )
                 harmony.properties["chords"] = type(harmony.chords)(chords)
+            elif rest == "harmony":
+                _set_chart(section, piece, str(edit.value))
             else:
                 track = next(t for t in section.tracks() if t.track.data == rest)
                 _set_track(track, edit.field, edit.value)

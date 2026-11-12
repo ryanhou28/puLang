@@ -42,10 +42,14 @@ class Song:
         return parse_ir(self.source) if isinstance(self.source, str) else self.source
 
     def edits(self) -> list[Edit]:
-        """Edits made above the notes, kept beside the song in its overrides."""
+        """
+        Edits made above the notes, kept beside the song in its overrides: those of
+        the variations picked at each site, then the hand edits.
+        """
         from pypulang.backends.kaidaw.state import SongState
+        from pypulang.variations import song_edits
 
-        return SongState.beside(self.path).load_overrides().edit_list()
+        return song_edits(SongState.beside(self.path).load_overrides())
 
     def compile(
         self,

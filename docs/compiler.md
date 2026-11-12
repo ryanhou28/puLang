@@ -50,6 +50,13 @@ pulang render song.py -o song.wav    # bounce it
 pulang stems song.py -o stems/       # bounce each track alone, and measure them
 pulang save song.py 'C:\songs\x.kaidaw'
 pulang watch song.py                 # push on every save
+
+pulang variations song.py            # each site's alternatives, and which is picked
+pulang propose song.py "chorus hook" hook-b 'motif/hook:notes=3/4 2/8 1 ...'
+pulang pick song.py "chorus hook" hook-b
+pulang audition song.py "chorus hook" -o takes/
+pulang agent describe '{"song": "song.py"}'   # one agent tool, JSON in and out
+pulang mcp                           # the agent tools as an MCP server on stdio
 ```
 
 Install with `pip install -e .`, and start kaiDAW with `tools/build-windows.sh serve` from its
@@ -267,6 +274,7 @@ were made at, as edits of the IR, and applied by a pass when the song compiles:
 
 | Level | Target | Fields | Reaches |
 |---|---|---|---|
+| intent | `verse/harmony` | `chart` | the whole progression, as a chord chart; a short one loops |
 | intent | `verse/harmony@3+0` (the chord starting at bar 3, beat 0) | `chord` | every occurrence of the section |
 | intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern`, `melody` | every occurrence |
 | intent | `motif/hook` | `notes` | every place the motif is used |
@@ -293,6 +301,53 @@ the hand edits it reproduces exactly and how many notes nobody touched it would 
 A chord the edited notes spell is offered together with the voicing as played, because a new
 chord on its own would be voiced afresh: the pair keeps the notes and tells the other parts
 what the harmony now is. Keeping a reading drops the note edits it explains.
+
+## Variations
+
+A variation is an alternative for one place in a song: a named bundle of the edits above,
+at a site such as "chorus hook" or "verse harmony". Anyone can propose one, a person or an
+agent, and the source is always the first alternative at every site. Proposing keeps the
+bundle in the song's overrides without playing it; picking one makes every compile apply
+its edits. Chosen variations apply before hand edits, so a hand edit still has the last
+word. Alternatives at one site replace each other, and picking `source` goes back to the
+song as written.
+
+```sh
+pulang propose song.py "chorus hook" hook-high "motif/hook:notes=1'/8 7 6 5/4. 3/8" \
+    --description "from the octave down"
+pulang audition song.py "chorus hook" -o takes/   # source.wav, hook-high.wav, ...
+pulang pick song.py "chorus hook" hook-high
+```
+
+A bundle is checked by compiling the song with it before it is kept, and is refused if the
+compiler rejects it, if it aims at a place the song does not have, or if it changes no
+notes. It is described by what it does: which section occurrences and parts change, and how
+many notes. `audition` renders the source and every alternative at a site through kaiDAW
+over the same bars, the first occurrence any of them touches with a bar before it, so they
+can be compared directly, and pushes the song back as picked when it is done. The companion
+page in kaiDAW's source tab lists the sites and picks with one click.
+
+## Agent tools
+
+An agent cannot hear a song, but it can read one at every level, change it at the level a
+change belongs to, propose alternatives for a person to hear and pick, review the result,
+and render a window to measure. `pypulang.agent` does each of those to a song file and
+returns plain data:
+
+| Tool | What it does |
+|---|---|
+| `describe` | The song in one read: form with bars and times, each section's chart, every track's part, motifs, edits, variations |
+| `ir` | The IR at one stage, optionally one section |
+| `review` | The compiler's read-through, and each melody's range and density per section |
+| `edit`, `drop` | Change one thing above the notes and keep it, or forget it |
+| `propose`, `pick`, `drop_variation`, `variations` | Variations, as above |
+| `render` | Push to kaiDAW and bounce a section occurrence, some bars, or the song, with its levels |
+| `audition` | Render every alternative at a site |
+
+Every change is checked by compiling before it is kept and comes back with the notes it
+changed and any warning it brought. The same tools are `pulang agent <tool> '<json>'` for
+scripts and `pulang mcp`, a Model Context Protocol server on stdio, for an agent such as
+Claude Code: `claude mcp add pulang -- pulang mcp`.
 ## Audio and samples
 
 A section can play an audio file on a track, and a rack can be a sampler with files on its
@@ -414,6 +469,8 @@ What exists and is tested:
 | Performance | Swing, humanize, accent, pump, bend, lay-back, phrasing, legato, dynamics marks |
 | kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
 | Editing above the notes | Intent and score edits kept at their level; `pulang serve` traces a DAW note up every level; hand edits read back as chords, voicings, octaves, velocity and mutes, each checked by lowering |
+| Variations | Alternatives as bundles of edits at a site, proposed, auditioned and picked; the source always one of them |
+| Agent tools | Describe, IR, review, edit, propose, pick, render, audition, over a JSON CLI and an MCP server |
 | Audio | Files on tracks per section, and samplers with files on keys, imported into kaiDAW's pool |
 | Review | Melody against harmony, ranges, parallels |
 

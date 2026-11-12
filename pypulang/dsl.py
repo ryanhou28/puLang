@@ -17,7 +17,7 @@ from enum import Enum
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Union
 
-from pypulang.harmony import parse_chart
+from pypulang.harmony import chart_changes
 from pypulang.ir.intent import (
     AudioPlacement,
     Chord,
@@ -739,19 +739,7 @@ class SectionBuilder:
             section.chart("Dm9 G13 | Cmaj9 | Em7 A7b13 | Dm9 G7alt")
         """
         key = self._key or self._piece._key
-        parsed = parse_chart(chart, key)
-        bars_in_chart = sum(Fraction(*fraction) for _, fraction in parsed)
-        changes = []
-        filled = Fraction(0)
-        while filled < self._bars:
-            for chord, fraction in parsed:
-                if filled >= self._bars:
-                    break
-                duration = min(Fraction(*fraction), self._bars - filled)
-                changes.append(ChordChange(chord=chord, duration=duration))
-                filled += duration
-            if bars_in_chart == 0:
-                break
+        changes = [ChordChange(chord=c, duration=d) for c, d in chart_changes(chart, key, self._bars)]
         self._harmony = Harmony(changes=changes, duration_unit="bars")
         return self
 
