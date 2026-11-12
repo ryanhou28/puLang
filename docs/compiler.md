@@ -332,6 +332,20 @@ from its close, overhead and room mics, read straight out of the 1.2 GB archive 
 requests; and a future-bass kit of CC0 Kickmess kicks and TR-909 hits by F9 Audio, which are
 free to use but not to redistribute. Without a `kit`, the racks use the Surge drums.
 
+Acoustic instruments are sampled the same way. `sampled("keys", "piano")` is a sampler with a
+zone per sample, each key playing the nearest one: `piano` (a Steinway B), `upright_bass`
+(pizzicato), `vibes`, `muted_trumpet`, `trumpet`, `trumpet_stab`, `trombone`, `trombone_stab`,
+`tenor_sax`, and `strings` (cellos, violas and violins across the range), from
+`pypulang.sounds.instruments`. `python scripts/get_instrument_samples.py` builds them into
+`examples/songs/samples/instruments/` from two CC0 libraries, the
+[Versilian Community Sample Library](https://github.com/sgossner/VCSL) and
+[VSCO 2 Community Edition](https://github.com/sgossner/VSCO-2-CE), downloading only the
+seconds each sample keeps. kaiDAW's sampler plays one sample per key and follows velocity
+with gain, so each instrument is one dynamic layer of its library, and a note held longer
+than its sample (six seconds for sustained sounds) runs out. The tables name the note each
+sample really sounds: most of these libraries call middle C "C3", and the pitches were
+checked by ear's stand-in, a pitch detector.
+
 ## Sound
 
 `pypulang.sounds` holds a measured vocabulary for Surge XT: names and units for values a host
