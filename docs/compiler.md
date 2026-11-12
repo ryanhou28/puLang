@@ -213,8 +213,9 @@ with piece(tempo=126, key="D minor", title="fills") as song:
     verse.track("ride", role=Role.RHYTHM).pattern(grid(cell="x...x.x.x...x.x.", pitch=51))
     verse.track("pedal", role=Role.RHYTHM).pattern(grid(cell="....x.......x...", pitch=44))
     verse.track("snare", role=Role.RHYTHM).pattern(grid(cell="............x...", pitch=38))
+    verse.track("kick", role=Role.RHYTHM).pattern(grid(cell="x.......x.......", pitch=36))
     verse.fill("setup", beats=1, every=4, keep=("pedal",))
-    verse.fill({"snare": "o.o.oxxX", "kick": "x......x"}, beats=2, pitches={"kick": 36})
+    verse.fill({"snare": "o.o.ox..", "tom_low": "......xX"}, beats=2, pitches={"tom_low": 45})
     song.form([verse])
 ```
 
