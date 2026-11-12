@@ -343,8 +343,8 @@ zone per sample, each key playing the nearest one: `piano` (a Steinway B), `upri
 seconds each sample keeps. kaiDAW's sampler plays one sample per key and follows velocity
 with gain, so each instrument is one dynamic layer of its library, and a note held longer
 than its sample (six seconds for sustained sounds) runs out. The tables name the note each
-sample really sounds: most of these libraries call middle C "C3", and the pitches were
-checked by ear's stand-in, a pitch detector.
+sample really sounds, checked with a pitch detector, since most of these libraries call
+middle C "C3".
 
 ## Sound
 
