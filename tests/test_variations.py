@@ -242,3 +242,13 @@ class TestCompanion:
         assert "Variations" in page and "hook-high" in page and "from the octave down" in page
         assert "pushed" in companion.pick("hook", "hook-high")
         assert agent.variations(song)["hook"]["picked"] == "hook-high"
+
+
+class TestFocus:
+    def test_alternatives_are_heard_where_they_change_most_not_where_they_are_teased(self):
+        from pypulang.variations import Effect, focus
+
+        teased = Effect(changed={"intro#1/lead": 4, "chorus#1/lead": 20, "chorus#2/lead": 21})
+        order = ["intro#1", "verse#1", "chorus#1", "chorus#2"]
+        assert focus([teased], order) == "chorus#1"
+        assert focus([Effect()], order) is None

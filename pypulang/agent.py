@@ -39,7 +39,7 @@ from pypulang.compiler.dialects import event, intent
 from pypulang.compiler.edits import LEVELS, Edit, current_value, section_chart, track_value
 from pypulang.compiler.pipeline import CompileResult
 from pypulang.songfile import Song, load_song
-from pypulang.variations import SOURCE, Variation, effect, sites, song_edits, window
+from pypulang.variations import SOURCE, Variation, effect, focus, sites, song_edits
 
 
 class ToolError(ValueError):
@@ -509,11 +509,14 @@ def render(
     )
 
 
-def audition(song: str, site: str, out_dir: str, port: int = DEFAULT_PORT) -> dict[str, Any]:
+def audition(
+    song: str, site: str, out_dir: str, section: str | None = None, port: int = DEFAULT_PORT
+) -> dict[str, Any]:
     """
-    Render the source and every alternative at a site over the same window: the
-    first section occurrence any of them changes, with a bar before it. The song
-    is pushed back as picked afterwards.
+    Render the source and every alternative at a site over the same window, with a
+    bar before it: `section` if given, such as "chorus#1", else the first section
+    occurrence where the alternatives change at least half as many notes as where
+    they change most. The song is pushed back as picked afterwards.
     """
     loaded, _, overrides = _song(song)
     found = sites(overrides).get(site)
@@ -521,21 +524,19 @@ def audition(song: str, site: str, out_dir: str, port: int = DEFAULT_PORT) -> di
         raise ToolError(f"No variations at {site!r}")
     source = loaded.compile(edits=song_edits(overrides, site=site))
     tempo = _tempo(source)
-    spans = []
-    effects = {}
-    for variation in found:
-        change = effect(source, loaded.compile(edits=song_edits(overrides, trying=variation)))
-        effects[variation.name] = change
-        span = window(change, source)
-        if span is not None:
-            spans.append(span)
-    if not spans:
-        raise ToolError(f"No variation at {site!r} changes any notes")
+    effects = {
+        v.name: effect(source, loaded.compile(edits=song_edits(overrides, trying=v))) for v in found
+    }
     stream = _top(source.stages["event"], event.StreamOp)
-    first = min(spans)[0]
-    occurrence = next(s for s in stream.sections() if float(s.at.data) == first)
+    order = [s.tag.data for s in stream.sections()]
+    tag = section or focus(list(effects.values()), order)
+    if tag is None:
+        raise ToolError(f"No variation at {site!r} changes any notes")
+    occurrence = next((s for s in stream.sections() if s.tag.data == tag), None)
+    if occurrence is None:
+        raise ToolError(f"No section occurrence {tag!r}; the form is {order}")
     bar = float(occurrence.meter.data.beats_per_bar)
-    begin = max(0.0, first - bar)
+    begin = max(0.0, float(occurrence.at.data) - bar)
     end = float(occurrence.at.data + occurrence.length.data)
     start, seconds = begin * 60.0 / tempo, (end - begin) * 60.0 / tempo + 1.0
     out = Path(out_dir)

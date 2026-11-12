@@ -333,7 +333,12 @@ def cmd_audition(args: argparse.Namespace) -> int:
     from pypulang.agent import audition
 
     return _agent_call(
-        audition, song=str(args.song), site=args.site, out_dir=args.output, port=args.port
+        audition,
+        song=str(args.song),
+        site=args.site,
+        out_dir=args.output,
+        section=args.section,
+        port=args.port,
     )
 
 
@@ -426,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     audition_cmd.add_argument("site")
     audition_cmd.add_argument("-o", "--output", required=True, help="A folder for the WAVs")
+    audition_cmd.add_argument("--section", help='An occurrence to hear it in, such as "chorus#1"')
 
     agent_cmd = commands.add_parser("agent", help="Run one agent tool: JSON in, JSON out")
     agent_cmd.add_argument(

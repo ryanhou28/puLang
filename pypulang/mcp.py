@@ -140,6 +140,10 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "site": {"type": "string"},
                 "out_dir": {"type": "string"},
+                "section": {
+                    "type": "string",
+                    "description": 'An occurrence to hear it in, such as "chorus#1"',
+                },
                 "port": {"type": "integer"},
             },
             ["site", "out_dir"],

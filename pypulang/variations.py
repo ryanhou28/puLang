@@ -165,21 +165,20 @@ def effect(before: CompileResult, after: CompileResult) -> Effect:
     return result
 
 
-def window(effect_: Effect, before: CompileResult) -> tuple[float, float] | None:
+def focus(effects: list[Effect], order: list[str]) -> str | None:
     """
-    The span of the song a change touches, in beats, from the first section
-    occurrence it changes to the end of the last.
-    """
-    from pypulang.compiler.dialects import event
+    The section occurrence to hear a set of alternatives in: the first, in `order`,
+    where they change at least half as many notes as where they change the most.
 
-    module = before.stages["event"]
-    stream = next(o for o in module.body.block.ops if isinstance(o, event.StreamOp))
-    touched = {p.partition("/")[0] for p in effect_.places()}
-    spans = [
-        (float(s.at.data), float(s.at.data + s.length.data))
-        for s in stream.sections()
-        if s.tag.data in touched
-    ]
-    if not spans:
+    A chorus hook teased once in the intro is heard in the first chorus, not the
+    intro, because the intro changes only a few notes.
+    """
+    counts: dict[str, int] = defaultdict(int)
+    for one in effects:
+        for table in (one.changed, one.added, one.removed):
+            for place, n in table.items():
+                counts[place.partition("/")[0]] += n
+    if not counts:
         return None
-    return min(a for a, _ in spans), max(b for _, b in spans)
+    enough = max(counts.values()) / 2
+    return next((tag for tag in order if counts.get(tag, 0) >= enough), None)
