@@ -1,0 +1,119 @@
+{
+ "added": {},
+ "choices": {},
+ "clips": {},
+ "edits": [
+  {
+   "base": "r/2 #3/8 5/8 b7/8 2'/8",
+   "field": "notes",
+   "level": "intent",
+   "target": "motif/echo3",
+   "value": "r/2 #7,/8 2/8 4/8 6/8"
+  },
+  {
+   "base": 64,
+   "field": "velocity",
+   "level": "intent",
+   "target": "intro/vibes",
+   "value": 96
+  },
+  {
+   "base": 46,
+   "field": "velocity",
+   "level": "intent",
+   "target": "verse2/vibes",
+   "value": 34
+  },
+  {
+   "base": 84,
+   "field": "velocity",
+   "level": "intent",
+   "target": "bridge/sax",
+   "value": 104
+  },
+  {
+   "base": 62,
+   "field": "velocity",
+   "level": "intent",
+   "target": "bridge/strings",
+   "value": 50
+  },
+  {
+   "base": "wide(48,84)",
+   "field": "voicing",
+   "level": "intent",
+   "target": "intro/strings",
+   "value": "wide(41,67)"
+  },
+  {
+   "base": 56,
+   "field": "velocity",
+   "level": "intent",
+   "target": "intro/strings",
+   "value": 40
+  }
+ ],
+ "notes": {},
+ "variations": {
+  "hook-climb": {
+   "author": "agent",
+   "created": "2026-11-12T19:39:16+00:00",
+   "description": "the hook starts low on the major seventh and climbs to the fifth before falling to the altered ninth; its third statement is not lifted an octave",
+   "edits": [
+    {
+     "base": "r/8 1/8 2/8 3/4~ 3/8 2/8 1/8 | 7,/4. 6,/8 5,/2",
+     "field": "notes",
+     "level": "intent",
+     "target": "motif/hook",
+     "value": "r/8 5,/8 7,/8 1/4~ 1/8 2/8 3/8 | 7,/4. 6,/8 5,/2"
+    },
+    {
+     "base": "hook; hook -2 end 2; hook +1 ^; close",
+     "field": "melody",
+     "level": "intent",
+     "target": "chorus/trumpet",
+     "value": "hook; hook -2 end 2; hook +1; close"
+    },
+    {
+     "base": "hook; hook -2 end 2; hook +1 ^; close",
+     "field": "melody",
+     "level": "intent",
+     "target": "chorus2/trumpet",
+     "value": "hook; hook -2 end 2; hook +1; close"
+    },
+    {
+     "base": "hook; hook -2 end 2; hook +1 ^; close",
+     "field": "melody",
+     "level": "intent",
+     "target": "chorus_last/trumpet",
+     "value": "hook; hook -2 end 2; hook +1; close"
+    },
+    {
+     "base": "hook; hook -2 end 2; hook +1 ^; close",
+     "field": "melody",
+     "level": "intent",
+     "target": "chorus_last/sax",
+     "value": "hook; hook -2 end 2; hook +1; close"
+    }
+   ],
+   "name": "hook-climb",
+   "site": "chorus hook"
+  },
+  "hook-sigh": {
+   "author": "agent",
+   "created": "2026-11-12T19:37:42+00:00",
+   "description": "the hook starts on its high note on the downbeat and sighs down, then leans on the eleventh over the altered dominant",
+   "edits": [
+    {
+     "base": "r/8 1/8 2/8 3/4~ 3/8 2/8 1/8 | 7,/4. 6,/8 5,/2",
+     "field": "notes",
+     "level": "intent",
+     "target": "motif/hook",
+     "value": "3/4. 2/8 1/2 | 7,/8 1/8 7,/4 5,/2"
+    }
+   ],
+   "name": "hook-sigh",
+   "site": "chorus hook"
+  }
+ }
+}

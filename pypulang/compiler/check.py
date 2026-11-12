@@ -155,10 +155,13 @@ def review_parallels(top: score.ScoreOp, review: Review) -> None:
         if part.role.data != "harmony":
             continue
         onsets: dict[Fraction, list[int]] = {}
+        places: dict[Fraction, str] = {}
         for bar in part.bars():
             for note in bar.notes():
                 time = bar.start.data + note.beat.data
                 onsets.setdefault(time, []).append(midi_of(note.pitch.data))
+                # "chorus#1/strings/3+2", the place without its voice
+                places.setdefault(time, loc_key(note.location).rsplit("/", 1)[0])
         times = sorted(onsets)
         for first, second in zip(times, times[1:], strict=False):
             a, b = sorted(onsets[first]), sorted(onsets[second])
@@ -177,18 +180,65 @@ def review_parallels(top: score.ScoreOp, review: Review) -> None:
                         review.findings.append(
                             Finding(
                                 "parallel",
-                                f"{part.part.data} beat {float(first):.2f}",
+                                places[first],
                                 f"{'octaves' if interval == 0 else 'fifths'} moving by {moved}",
                             )
                         )
 
 
-def review(module: ModuleOp) -> Review:
-    """Read through a realized `score` module."""
+def review_declared_ranges(intent_module: ModuleOp, top: score.ScoreOp, review: Review) -> None:
+    """
+    Melody notes well outside the range their track was given.
+
+    The range is a strong preference, not a wall: a sequence may climb a step
+    past it on purpose. An octave mark can carry a line much further, and that
+    is worth a look, so notes more than a whole step outside are reported.
+    """
+    from pypulang.compiler.dialects import intent
+
+    piece = next(o for o in intent_module.body.block.ops if isinstance(o, intent.PieceOp))
+    declared: dict[tuple[str, str], tuple[int, int, int]] = {}
+    for section in piece.sections():
+        for track in section.tracks():
+            for content in track.body.block.ops:
+                if isinstance(content, intent.MelodyOp):
+                    declared[(section.section.data, track.track.data)] = (
+                        content.low.value.data,
+                        content.high.value.data,
+                        track.octave.value.data,
+                    )
+    for part in top.parts():
+        for bar in part.bars():
+            for note in bar.notes():
+                loc = loc_key(note.location)
+                section = loc.partition("#")[0]
+                found = declared.get((section, part.part.data))
+                if found is None:
+                    continue
+                low, high, octave = found
+                pitch = midi_of(note.pitch.data) - 12 * octave
+                if pitch < low - 2 or pitch > high + 2:
+                    review.findings.append(
+                        Finding(
+                            "beyond its range",
+                            loc,
+                            f"{note.pitch.data} where {part.part.data}'s melody in {section} "
+                            f"keeps to MIDI {low}-{high}",
+                        )
+                    )
+
+
+def review(module: ModuleOp, intent_module: ModuleOp | None = None) -> Review:
+    """
+    Read through a realized `score` module; with the `intent` module, check
+    melodies against the ranges their tracks were given too.
+    """
     result = Review()
     for top in module.body.block.ops:
         if isinstance(top, score.ScoreOp):
             review_melodies(top, result)
             review_ranges(top, result)
             review_parallels(top, result)
+            if intent_module is not None:
+                review_declared_ranges(intent_module, top, result)
     return result

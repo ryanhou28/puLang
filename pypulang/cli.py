@@ -65,8 +65,8 @@ def cmd_ir(args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    module = load_song(args.song).compile(until="score").stages["score"]
-    print(review(module).summary())
+    result = load_song(args.song).compile(until="score")
+    print(review(result.stages["score"], result.stages["intent"]).summary())
     return 0
 
 
@@ -212,14 +212,16 @@ def cmd_stems(args: argparse.Namespace) -> int:
 
     Solo is a mix setting and the DAW owns the mix, so each track is put back as
     it was. A soloed track's sends are silenced with everything else, so stems are dry.
+    The song is pushed first, as `render` pushes it, so the stems are of the song
+    as it now stands.
     """
     song = load_song(args.song)
     client = _client(args)
     state = _state(args)
+    report = push(song.compile().daw, client, state)
+    if report.operations:
+        print(report.summary().splitlines()[0])
     lock = state.load_lock()
-    if lock.empty:
-        print("Push the song first.", file=sys.stderr)
-        return 1
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
     seconds = args.seconds or _seconds(song) + 2.0
@@ -345,11 +347,23 @@ def cmd_audition(args: argparse.Namespace) -> int:
 
 def cmd_agent(args: argparse.Namespace) -> int:
     from pypulang.agent import TOOLS
+    from pypulang.mcp import _bad_arguments, usage
 
+    if args.tool in (None, "help"):
+        # Every tool and its arguments: the same schemas `pulang mcp` serves.
+        print("\n\n".join(usage(name) for name in TOOLS))
+        return 0
     if args.tool not in TOOLS:
         print(f"error: no tool {args.tool!r}; tools are {', '.join(TOOLS)}", file=sys.stderr)
         return 1
-    arguments = json.loads(args.arguments) if args.arguments else {}
+    try:
+        arguments = json.loads(args.arguments) if args.arguments else {}
+    except json.JSONDecodeError as error:
+        print(f"error: the arguments are not JSON: {error}\n{usage(args.tool)}", file=sys.stderr)
+        return 1
+    if (bad := _bad_arguments(args.tool, arguments)) is not None:
+        print(f"error: {bad}", file=sys.stderr)
+        return 1
     return _agent_call(TOOLS[args.tool], **arguments)
 
 
@@ -436,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
 
     agent_cmd = commands.add_parser("agent", help="Run one agent tool: JSON in, JSON out")
     agent_cmd.add_argument(
-        "tool", help="describe, ir, review, variations, edit, drop, propose, pick, ..."
+        "tool", nargs="?", help="A tool; leave it out to list every tool and its arguments"
     )
     agent_cmd.add_argument("arguments", nargs="?", help='Its arguments as JSON, {"song": ...}')
     agent_cmd.set_defaults(handler=cmd_agent)

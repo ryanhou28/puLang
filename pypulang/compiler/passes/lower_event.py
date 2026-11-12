@@ -93,14 +93,14 @@ def _controllers(
 
 def _clips(
     track: event.TrackOp, sections: list[event.SectionOp]
-) -> tuple[list[daw.ClipOp], int, int]:
+) -> tuple[list[daw.ClipOp], int, list[str]]:
     lanes = _lanes(track)
     groups: dict[str, list[event.NoteOp]] = {}
     for note in track.notes():
         groups.setdefault(_section_of(note, sections).tag.data, []).append(note)
 
     inexact = 0
-    clipped = 0
+    clipped: list[str] = []
     clips = []
     for section in sections:
         tag = section.tag.data
@@ -116,10 +116,10 @@ def _clips(
             start = max(round(start_exact) - clip_start, 0)
             dur = max(round(dur_exact), 1)
             if start >= clip_length:
-                clipped += 1
+                clipped.append(loc_key(note.location))
                 continue
             if start + dur > clip_length:
-                clipped += 1
+                clipped.append(loc_key(note.location))
                 dur = clip_length - start
             lowered = daw.NoteOp(
                 max(0, min(127, note.pitch.value.data)),
@@ -195,7 +195,7 @@ class LowerEventToDaw(ModulePass):
 
         racks = {o.track.data: o for o in stream.body.block.ops if isinstance(o, daw.RackOp)}
         inexact = 0
-        clipped = 0
+        clipped: list[str] = []
         for track in stream.tracks():
             clips, track_inexact, track_clipped = _clips(track, sections)
             inexact += track_inexact
@@ -229,7 +229,11 @@ class LowerEventToDaw(ModulePass):
         if inexact:
             warn(op, f"{inexact} note(s) needed rounding to {PPQ} ticks per quarter note")
         if clipped:
-            warn(op, f"{clipped} note(s) ran past the end of their section and were cut")
+            named = ", ".join(clipped[:4]) + (", ..." if len(clipped) > 4 else "")
+            warn(
+                op,
+                f"{len(clipped)} note(s) ran past the end of their section and were cut: {named}",
+            )
 
         result = daw.ProjectOp(stream.title.data, PPQ, ops)
         result.location = stream.location

@@ -20,7 +20,7 @@ change, and how many notes.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -98,10 +98,16 @@ def song_edits(
     edits: list[Edit] = []
     for variation in chosen(overrides):
         if variation.site != replaced:
-            edits.extend(variation.edits)
+            edits.extend(replace(e, origin=variation.name) for e in variation.edits)
     if trying is not None:
-        edits.extend(trying.edits)
+        edits.extend(replace(e, origin=trying.name) for e in trying.edits)
     return [*edits, *overrides.edit_list()]
+
+
+def shadowed(overrides: Overrides, variation: Variation) -> list[str]:
+    """The variation's edits a hand edit of the same thing overrides, by key."""
+    hand = {e.key for e in overrides.edit_list()}
+    return [e.key for e in variation.edits if e.key in hand]
 
 
 @dataclass

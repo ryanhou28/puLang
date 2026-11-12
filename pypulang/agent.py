@@ -42,7 +42,7 @@ from pypulang.compiler.edits import LEVELS, Edit, current_value, section_chart, 
 from pypulang.compiler.pipeline import CompileResult
 from pypulang.compiler.tempo import seconds_at, stream_points
 from pypulang.songfile import Song, load_song
-from pypulang.variations import SOURCE, Variation, effect, focus, sites, song_edits
+from pypulang.variations import SOURCE, Variation, effect, focus, shadowed, sites, song_edits
 
 
 class ToolError(ValueError):
@@ -141,7 +141,12 @@ def describe(song: str) -> dict[str, Any]:
             "tempo": float(section.tempo.value.data) if section.tempo is not None else tempo,
             "tempo_changes": [
                 {
-                    "kind": {"ramp": "ritardando or accelerando", "hold": "fermata"}[c.kind.data],
+                    "kind": "fermata"
+                    if c.kind.data == "hold"
+                    else "ritardando"
+                    if float(c.value.value.data)
+                    < (float(section.tempo.value.data) if section.tempo is not None else tempo)
+                    else "accelerando",
                     "at_beat": c.at.data,
                     "beats": c.length.data,
                     "to_bpm" if c.kind.data == "ramp" else "times_longer": float(
@@ -197,7 +202,11 @@ def ir(song: str, stage: str = "intent", section: str | None = None) -> str:
             raise ToolError(f"No section {section!r}")
         return str(op)
     text = print_ir(module, locations=True)
-    return "\n".join(line for line in text.splitlines() if f'"{section}#' in line)
+    # Located lines name their occurrence as "form/<section>#<n>".
+    found = [line for line in text.splitlines() if f"form/{section}#" in line]
+    if not found:
+        raise ToolError(f"No lines located in {section!r} at the {stage} stage")
+    return "\n".join(found)
 
 
 def review(song: str) -> dict[str, Any]:
@@ -209,7 +218,7 @@ def review(song: str) -> dict[str, Any]:
 
     loaded, _, _ = _song(song)
     result = loaded.compile(until="score")
-    found = read_through(result.stages["score"])
+    found = read_through(result.stages["score"], result.stages["intent"])
     by_kind: dict[str, list[dict[str, str]]] = {}
     for finding in found.findings:
         by_kind.setdefault(finding.kind, []).append(asdict(finding))
@@ -251,6 +260,7 @@ def _variations(overrides: Overrides) -> dict[str, Any]:
                         "description": v.description,
                         "author": v.author,
                         "edits": [e.to_json() for e in v.edits],
+                        "overridden_by_hand_edits": shadowed(overrides, v),
                     }
                     for v in found
                 ],
@@ -367,13 +377,15 @@ def edit(song: str, target: str, field: str, value: Any, level: str = "intent") 
     trial.put_edit(change)
     after = _checked(loaded, song_edits(trial), [change])
     state.save_overrides(trial)
-    return {
-        "edit": change.key,
-        "from": change.base,
-        "to": change.value,
-        "effect": effect(before, after).to_json(),
-        "warnings": _new_warnings(before, after),
-    }
+    return plain(
+        {
+            "edit": change.key,
+            "from": change.base,
+            "to": change.value,
+            "effect": effect(before, after).to_json(),
+            "warnings": _new_warnings(before, after),
+        }
+    )
 
 
 def drop(song: str, key: str) -> dict[str, Any]:
@@ -414,12 +426,16 @@ def propose(
         raise ToolError(f"{name} changes no notes against the source at {site!r}")
     overrides.put_variation(variation)
     state.save_overrides(overrides)
-    return {
-        "variation": name,
-        "site": site,
-        "effect": change.to_json(),
-        "warnings": _new_warnings(source, trial),
-    }
+    warnings = _new_warnings(source, trial)
+    hidden = shadowed(overrides, variation)
+    if hidden:
+        # Hand edits apply after variations, so these parts of the bundle are
+        # not heard while the hand edits stand. Said now, not discovered later.
+        warnings.append(
+            f"hand edits of {', '.join(hidden)} override this variation's; drop them "
+            "(or fold them into the source) to hear all of it"
+        )
+    return {"variation": name, "site": site, "effect": change.to_json(), "warnings": warnings}
 
 
 def pick(song: str, site: str, name: str) -> dict[str, Any]:

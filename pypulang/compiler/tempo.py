@@ -15,6 +15,8 @@ from fractions import Fraction
 from typing import Any
 
 RAMP_STEP = Fraction(1, 2)
+# What kaiDAW's tempo map takes.
+LOWEST_BPM, HIGHEST_BPM = 20, 300
 
 
 def _tempo_at(points: list[tuple[Fraction, float]], at: Fraction) -> float:

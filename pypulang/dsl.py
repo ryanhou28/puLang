@@ -390,9 +390,9 @@ _NOTE_VALUE_PARAMS = ("rate", "hihat_rate", "step")
 
 
 def _bpm(value: float) -> float:
-    """A tempo, checked: puLang plays from 20 to 400 bpm."""
-    if not 20 <= float(value) <= 400:
-        raise ValueError(f"A tempo of {value} bpm is outside 20 to 400")
+    """A tempo, checked against what kaiDAW plays: 20 to 300 bpm."""
+    if not 20 <= float(value) <= 300:
+        raise ValueError(f"A tempo of {value} bpm is outside 20 to 300")
     return float(value)
 
 
