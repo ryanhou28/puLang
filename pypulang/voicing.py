@@ -118,6 +118,12 @@ def rootless(shape: ChordShape, chord: Chord, key: Key, register: Register) -> l
         return close(shape, chord, key, register)
     lower = shape.find("b13", "13", "#11", "#5", "b5", "5")
     spare = [t for t in shape.colours() if t != lower and t.function != "11"]
+    # With no ninth, the spare tone would be the natural fifth; beside an altered
+    # one (a 7#11's #11) it is a semitone's rub and pushes the form out of the
+    # hand. Three notes then, as a player would leave it.
+    altered = lower is not None and lower.function != "5"
+    if spare and altered and spare[0].function == "5":
+        spare = spare[1:]
     upper = shape.find("#9", "b9", "9") or (spare[0] if spare else None)
     forms = []
     for first, second, third_note, fourth in (

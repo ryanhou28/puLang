@@ -127,6 +127,12 @@ Passes run where you ask, through a song's `pipeline`:
 | `intent` | `Reharmonize` (tritone_sub, jazzify, modal_interchange, secondary_dominants), `Transpose` |
 | `event` | `Swing`, `Humanize`, `Accent`, `Pump`, `Bend`, `LayBack`, `Phrasing`, `Legato`, `Dynamics` |
 
+`pulang check` reads the score through and reports findings by section, bar and beat:
+melody notes against the chords, notes out of an instrument's comfortable range, melody notes
+more than a whole step outside the range their track was given (an octave mark can carry a
+line well past it), and parallel fifths and octaves in harmony parts. `pulang stems` pushes
+the song first, as `render` does, so stems are of the song as it stands.
+
 `Pump` ducks a track's fader on every hit of another. It makes the sidechain sound from a
 volume curve, so it needs no routing.
 
@@ -184,7 +190,7 @@ placement is a motif and its developments, applied left to right:
 | `end 1` | End on a degree: the answer to a question |
 | `vary 3` | Passing and neighbour notes; the same number gives the same ornaments |
 | `early 8`, `late 16` | Anticipate or delay by a note value |
-| `rest 2` | A placement of silence |
+| `rest 2` | A placement of silence, as long as the note value: `rest 1` is a whole note, four beats |
 
 Degrees are read in the section's key, so a melody follows a key change or a transposition.
 The first placement sits in the octave whose tonic is nearest the middle of the range, and
@@ -233,8 +239,11 @@ grid. A cell shorter than the fill is lined up with its end.
 A section can have its own tempo, and the tempo can move inside it. A section with no tempo
 of its own plays at the piece's, so the one after a ritardando is back "a tempo".
 `ritardando(to, bars)` and `accelerando(to, bars)` move the tempo gradually over a section's
-last bars, or from `at`; `fermata(bar, beat, hold)` plays a beat `hold` times as long, and
-the music picks up after it where it would have been, inside a ritardando too.
+last bars, or over `bars` from bar `at`; `fermata(bar, beat=0, hold=2, beats=1)` plays the
+`beats` from `beat` of `bar` `hold` times as long, and the music picks up after it where it
+would have been, inside a ritardando too. kaiDAW plays 20 to 300 bpm, and a compile that
+would go outside that, such as a long hold inside a deep ritardando, stops with the section
+and beat where it happens.
 
 kaiDAW's tempo changes are steps, so a gradual change is written as a step every half beat,
 each at the tempo of its middle, which keeps its length what a smooth change would take.
@@ -242,6 +251,22 @@ The whole map reaches kaiDAW's tempo map and MIDI files, and every time puLang r
 as `describe`'s form or a render window, is read through it. A song whose tempo never moves
 has no tempo map in its IR and lowers exactly as before. A section's tempo is an intent edit,
 `verse` with field `tempo`, so a variation or an agent can try a section faster or slower.
+
+## Pattern parameters
+
+Patterns take their parameters as keywords, such as `comp(density=0.6)`. Values given as note
+values in the DSL (`step=1/16`) are beats in the IR (`1/4`).
+
+| Pattern | Parameters |
+|---|---|
+| `grid` | `cell`, `pitch` (default 60), `step` (default a sixteenth), `gate`: the portion of each step that sounds (1/2) |
+| `hits` | `cell` (`-` holds a chord across steps), `step`, `gate` (1) |
+| `riff` | `cell`, `degrees` (space-separated, looping; `.` rests a hit), `base`: the pitch the line is placed nearest (48), `step`, `gate` (1). Degrees count from the bass note, so under a slash chord such as Bb/D, `1` is the D |
+| `comp` | `density` from 0 to 1 (1/2), `short`: how long a hit sounds, in eighths (3/2) |
+| `walking_bass` | `low` (28), `high` (55), `centre` (40) |
+| `solo_line` | `low` (62), `high` (86), `phrase` in bars (2), `rest`: the portion of phrases that rest (1/4) |
+| `arp` | `direction` up, down or updown, `rate` in beats (1/2) |
+| `root_quarters`, `root_eighths`, `root_fifths`, `block_chords` | none: the chord's root, or the whole chord, on a fixed rhythm |
 
 ## Voice leading
 
@@ -326,6 +351,7 @@ were made at, as edits of the IR, and applied by a pass when the song compiles:
 | intent | `verse/harmony@3+0` (the chord starting at bar 3, beat 0) | `chord` | every occurrence of the section |
 | intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern`, `melody` | every occurrence |
 | intent | `motif/hook` | `notes` | every place the motif is used |
+| intent | `rack/keys` | `volume` (0 to 1, 0.74 is unity), `pan` (-1 to 1) | the track's fader and pan, everywhere |
 | score | `verse#2/harmony@3+0` | `chord` | the second verse only; voiced in context |
 | score | `verse#2/keys/c4` | `pitches` | the exact notes of one chord in one part |
 
@@ -407,7 +433,19 @@ returns plain data:
 Every change is checked by compiling before it is kept and comes back with the notes it
 changed and any warning it brought. The same tools are `pulang agent <tool> '<json>'` for
 scripts and `pulang mcp`, a Model Context Protocol server on stdio, for an agent such as
-Claude Code: `claude mcp add pulang -- pulang mcp`.
+Claude Code: `claude mcp add pulang -- pulang mcp`. `pulang agent` alone lists every tool
+with its arguments, and a call with a missing or unknown argument says what the tool takes.
+
+A value is written as the song writes it: a chord symbol, motif or phrase text, a number. A
+pattern is its name and then its parameters as JSON, `riff {"cell": "x...", "degrees": "1"}`,
+or an object `{"kind": "riff", "params": {...}}`. `render` with no `section` or `start_bar`
+bounces the whole song. A hand edit of the same thing as a variation's edit applies after it,
+so `propose` warns when a hand edit would hide part of the bundle, and `variations` lists the
+hand edits that override each alternative.
+
+Edits name a section, and a section made with `transform` is a section of its own: an edit to
+`chorus/lead` does not reach `chorus_up`, its transposed copy, which takes the same edit by
+its own name. There is no tool yet to fold kept edits back into the song file.
 ## Audio and samples
 
 A section can play an audio file on a track, and a rack can be a sampler with files on its

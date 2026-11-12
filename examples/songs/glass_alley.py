@@ -244,7 +244,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     bridge = song.section("bridge", bars=8)
     bridge.chart("Gm9 | C9sus4 | Fmaj9 | Bbmaj9 | Em7b5 | A7b9 | Dm9 | Bb13")
     bridge.track("trumpet", role=Role.MELODY).melody(
-        "lament; lament -1; lament inv; lift", low=55, high=76
+        "lament; lament -1; lament inv; lift", low=55, high=79
     )
     band(bridge, piano=0.2, walk=False)
     bridge.track("strings", role=Role.HARMONY).pattern(hits(cell="x---------------")).voicing(

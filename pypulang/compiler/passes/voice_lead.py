@@ -16,6 +16,8 @@ from xdsl.dialects.builtin import ModuleOp
 from xdsl.passes import ModulePass
 
 from pypulang.compiler.dialects import score
+from pypulang.compiler.locs import loc_key
+from pypulang.harmony import chord_symbol
 from pypulang.voicing import DEFAULT_REGISTER, Register, candidates_for, lead_voices
 
 _SPEC_RE = re.compile(r"^(\w+)(?:\((\d+),(\d+)\))?$")
@@ -54,8 +56,9 @@ def voice_part(part: score.PartOp) -> None:
         for slot, candidates in zip(run, options, strict=True):
             if not candidates:
                 raise ValueError(
-                    f"No {name} voicing of {slot.chord.data} fits MIDI "
-                    f"{register.low}-{register.high}"
+                    f"{loc_key(slot.location)}: no {name} voicing of "
+                    f"{chord_symbol(slot.chord.data, slot.key.data)} fits MIDI "
+                    f"{register.low}-{register.high}; widen the range, or voice it another way"
                 )
         for slot, voicing in zip(run, lead_voices(options, register), strict=True):
             slot.set_pitches(voicing)

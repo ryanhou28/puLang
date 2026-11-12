@@ -30,11 +30,11 @@ _EDIT = {
         "level": {"type": "string", "enum": ["intent", "score"], "default": "intent"},
         "target": {
             "type": "string",
-            "description": 'Such as "chorus/harmony", "motif/hook", "verse/keys", or "outro" for its tempo',
+            "description": 'Such as "chorus/harmony", "motif/hook", "verse/keys", "rack/piano" for its volume or pan, or "outro" for its tempo',
         },
         "field": {
             "type": "string",
-            "description": "chart, chord, notes, melody, pattern, voicing, octave, velocity, muted, pitches, tempo",
+            "description": "chart, chord, notes, melody, pattern, voicing, octave, velocity, muted, pitches, tempo, volume, pan",
         },
         "value": {
             "description": "The new value: text as the song writes it, or a number or boolean"
@@ -172,11 +172,42 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def usage(name: str) -> str:
+    """A tool's arguments, required ones first, each with what it is."""
+    tool = next((t for t in TOOLS if t["name"] == name), None)
+    if tool is None:
+        return f"No tool {name!r}; tools are {', '.join(t['name'] for t in TOOLS)}"
+    schema = tool["inputSchema"]
+    required = schema.get("required", [])
+    lines = [f"{name}: {tool['description']}"]
+    for arg, spec in sorted(schema["properties"].items(), key=lambda kv: kv[0] not in required):
+        kind = spec.get("type", "any")
+        note = spec.get("description", "")
+        default = f" (default {spec['default']})" if "default" in spec else ""
+        lines.append(
+            f"  {arg}: {kind}{', required' if arg in required else ''}{default}  {note}".rstrip()
+        )
+    return "\n".join(lines)
+
+
+def _bad_arguments(name: str, arguments: dict[str, Any]) -> str | None:
+    """What is wrong with a call's arguments, or None if they fit the tool."""
+    import inspect
+
+    try:
+        inspect.signature(agent.TOOLS[name]).bind(**arguments)
+    except TypeError as error:
+        return f"{error}\n{usage(name)}"
+    return None
+
+
 def call(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
     """Run one tool. Returns the text of its answer and whether it failed."""
     tool = agent.TOOLS.get(name)
     if tool is None:
         return f"No tool {name!r}", True
+    if (bad := _bad_arguments(name, arguments)) is not None:
+        return bad, True
     try:
         # Anything a tool prints would corrupt the message stream on stdout.
         with contextlib.redirect_stdout(sys.stderr):

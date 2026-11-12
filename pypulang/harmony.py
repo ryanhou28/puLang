@@ -500,6 +500,17 @@ def chord_symbol(chord: Chord, key: Key) -> str:
     tokens = [t for t in chord.extensions if not (t == "dim7" and chord.quality == "diminished")]
     if chord.quality == "diminished" and "dim7" in chord.extensions:
         quality = "dim7"
+    # As a chart writes them: maj7 with a ninth is maj9, a minor-major seventh is
+    # m(maj7), a six-nine is 6/9. Every spelling reads back to the same chord.
+    if "maj7" in tokens:
+        top = next((t for t in ("13", "11", "9") if t in tokens), None)
+        if top is not None:
+            tokens = [f"maj{top}" if t == "maj7" else t for t in tokens if t != top]
+            tokens = [t for t in tokens if not (t in ("9", "11") and int(t) < int(top))]
+        if chord.quality == "minor":
+            first = next(t for t in tokens if t.startswith("maj"))
+            tokens = [f"({t})" if t == first else t for t in tokens]
+    tokens = ["6/9" if t == "69" else t for t in tokens]
     text = names[root_pitch_class(chord, key)] + quality + " ".join(tokens).replace(" ", "")
     if chord.bass_offset is not None:
         text += "/" + names[(pitch_class_to_semitone(key.root) + chord.bass_offset) % 12]

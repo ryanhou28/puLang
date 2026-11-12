@@ -80,7 +80,7 @@ class TestMap:
     def test_changes_that_do_not_fit_are_refused(self):
         with pytest.raises(ValueError, match="does not fit"):
             _too_long()
-        with pytest.raises(ValueError, match="outside 20 to 400"):
+        with pytest.raises(ValueError, match="outside 20 to 300"):
             song(b_tempo=1000)
 
 

@@ -21,7 +21,7 @@ from pypulang.compiler.dialects import daw, event, intent, score
 from pypulang.compiler.dialects.mus import from_attr, to_attr
 from pypulang.compiler.locs import in_section, loc_key
 from pypulang.compiler.notes import NoteRecord, add_notes
-from pypulang.compiler.tempo import section_points, tidy
+from pypulang.compiler.tempo import HIGHEST_BPM, LOWEST_BPM, section_points, tidy
 from pypulang.compiler.timeline import Timeline
 from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.ir.intent import Chord, Key, TimeSignature
@@ -301,7 +301,16 @@ def _tempo_map(piece: intent.PieceOp, occurrences: list[_Occurrence]) -> list[sc
         ]
         points.extend(section_points(marker.start.data, marker.length, base, changes))
     end = occurrences[-1].marker.start.data + occurrences[-1].marker.length
-    return [score.TempoOp(at, bpm) for at, bpm in tidy(points, end)]
+    tidied = tidy(points, end)
+    for at, bpm in tidied:
+        if not LOWEST_BPM <= bpm <= HIGHEST_BPM:
+            where = next(o for o in reversed(occurrences) if o.marker.start.data <= at)
+            raise ValueError(
+                f"{where.marker.tag}: the tempo reaches {bpm:g} bpm at beat "
+                f"{at - where.marker.start.data} of the section; kaiDAW plays {LOWEST_BPM} to "
+                f"{HIGHEST_BPM}. A fermata inside a ritardando holds the slowed tempo longer still."
+            )
+    return [score.TempoOp(at, bpm) for at, bpm in tidied]
 
 
 def _chord_timeline(occurrences: list[_Occurrence]) -> list[score.ChordOp]:

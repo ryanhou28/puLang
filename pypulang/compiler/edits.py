@@ -15,6 +15,7 @@ Each edit names its target the way locations do, by musical position:
     intent  "verse/keys"                 voicing | octave | velocity | muted | pattern
     intent  "verse/lead"                 melody     the phrase: which motifs, developed how
     intent  "motif/hook"                 notes      a motif, changed everywhere it is used
+    intent  "rack/keys"                  volume | pan  a track's fader (0.74 is unity) and pan
     score   "verse#2/harmony@3+0"        chord      the same chord, in the 2nd verse only
     score   "verse#2/keys/c4"            pitches    one chord's exact notes, for one part
 
@@ -34,7 +35,7 @@ from xdsl.context import Context
 from xdsl.dialects.builtin import IntegerAttr, ModuleOp, StringAttr, i64
 from xdsl.passes import ModulePass
 
-from pypulang.compiler.dialects import intent, score
+from pypulang.compiler.dialects import daw, intent, score
 from pypulang.compiler.dialects.mus import (
     ChordAttr,
     RationalAttr,
@@ -61,6 +62,9 @@ class Edit:
     field: str
     value: Any
     base: Any = None
+    # The variation this edit belongs to, if any, so a report can say so. Not
+    # part of what is stored with the edit.
+    origin: str = field(default="", compare=False)
 
     @property
     def key(self) -> str:
@@ -72,13 +76,29 @@ class Edit:
             "level": self.level,
             "target": self.target,
             "field": self.field,
-            "value": self.value,
-            "base": self.base,
+            "value": plain(self.value),
+            "base": plain(self.base),
         }
+
+    @property
+    def whose(self) -> str:
+        """ " (variation hook-b)" for an edit a variation brought, else nothing."""
+        return f" (variation {self.origin})" if self.origin else ""
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Edit:
         return cls(data["level"], data["target"], data["field"], data["value"], data.get("base"))
+
+
+def plain(value: Any) -> Any:
+    """A value as JSON keeps it: a fraction becomes an exact string such as "9/10"."""
+    if isinstance(value, Fraction):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [plain(v) for v in value]
+    return value
 
 
 @dataclass
@@ -195,6 +215,13 @@ def _intent_section(piece: intent.PieceOp, name: str) -> intent.SectionOp | None
     return next((s for s in piece.sections() if s.section.data == name), None)
 
 
+def _rack_op(piece: intent.PieceOp, track: str) -> daw.RackOp | None:
+    return next(
+        (o for o in piece.body.block.ops if isinstance(o, daw.RackOp) and o.track.data == track),
+        None,
+    )
+
+
 def _motif_op(piece: intent.PieceOp, name: str) -> intent.MotifOp | None:
     return next(
         (o for o in piece.body.block.ops if isinstance(o, intent.MotifOp) and o.motif.data == name),
@@ -219,6 +246,12 @@ def current_value(module: ModuleOp, edit: Edit) -> tuple[bool, Any]:
         if motif is None or edit.field != "notes":
             return False, None
         return True, motif.notes.data
+    if edit.target.startswith("rack/"):
+        rack = _rack_op(piece, edit.target.removeprefix("rack/"))
+        if rack is None or edit.field not in ("volume", "pan"):
+            return False, None
+        value = getattr(rack, edit.field)
+        return True, float(value.value.data) if value is not None else None
     name, _, rest = _parse_target(edit.target)
     section = _intent_section(piece, name)
     if section is None:
@@ -258,16 +291,30 @@ class ApplyIntentEdits(ModulePass):
                 continue
             exists, now = current_value(op, edit)
             if not exists:
-                self.report.orphaned.append(f"{edit.key}: the source has no such place")
+                self.report.orphaned.append(f"{edit.key}: the source has no such place{edit.whose}")
                 continue
-            if now != edit.base:
+            if plain(now) != plain(edit.base):
                 self.report.stale.append(
-                    f"{edit.key}: edited when the source gave {edit.base!r}, source now gives {now!r}"
+                    f"{edit.key}: edited when the source gave {plain(edit.base)!r}, "
+                    f"source now gives {plain(now)!r}{edit.whose}"
                 )
             if edit.target.startswith("motif/"):
                 motif = _motif_op(piece, edit.target.removeprefix("motif/"))
                 parse_motif(str(edit.value))
                 motif.properties["notes"] = StringAttr(str(edit.value))
+                self.report.applied.append(edit.key)
+                continue
+            if edit.target.startswith("rack/"):
+                rack = _rack_op(piece, edit.target.removeprefix("rack/"))
+                if edit.value in (None, ""):
+                    rack.properties.pop(edit.field, None)
+                else:
+                    bounds = (0.0, 1.0) if edit.field == "volume" else (-1.0, 1.0)
+                    if not bounds[0] <= float(edit.value) <= bounds[1]:
+                        raise ValueError(
+                            f"{edit.key}: {edit.value} is outside {bounds[0]} to {bounds[1]}"
+                        )
+                    rack.properties[edit.field] = float_attr(float(edit.value))
                 self.report.applied.append(edit.key)
                 continue
             name, _, rest = _parse_target(edit.target)
@@ -286,8 +333,8 @@ class ApplyIntentEdits(ModulePass):
                 if edit.value in (None, ""):
                     section.properties.pop("tempo", None)
                 else:
-                    if not 20 <= float(edit.value) <= 400:
-                        raise ValueError(f"A tempo of {edit.value} bpm is outside 20 to 400")
+                    if not 20 <= float(edit.value) <= 300:
+                        raise ValueError(f"A tempo of {edit.value} bpm is outside 20 to 300")
                     section.properties["tempo"] = float_attr(float(edit.value))
             else:
                 track = next(t for t in section.tracks() if t.track.data == rest)
