@@ -15,11 +15,18 @@ The `pulang` command.
     pulang stems song.py -o stems/        Bounce each track alone, and measure them
     pulang watch song.py                  Push every time the file is saved
     pulang serve song.py                  Show the IR beside kaiDAW, and edit it there
+    pulang variations song.py             List each site's alternatives and which is picked
+    pulang propose song.py SITE NAME EDIT Keep an alternative, such as motif/hook:notes="..."
+    pulang pick song.py SITE NAME         Choose one, or "source"
+    pulang audition song.py SITE -o dir/  Render every alternative at a site
+    pulang agent TOOL '{"song": ...}'     Run one agent tool: JSON in, JSON out
+    pulang mcp                            Serve the agent tools over MCP on stdio
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 import time
@@ -161,12 +168,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def _seconds(song: Song) -> float:
-    """How long a piece runs, from its section markers and first tempo."""
+    """How long a piece runs, from its section markers and its tempo map."""
+    from pypulang.compiler.tempo import seconds_at, stream_points
+
     module = song.compile(until="event").stages["event"]
     stream = next(o for o in module.body.block.ops if isinstance(o, event_dialect.StreamOp))
     end = max((s.at.data + s.length.data for s in stream.sections()), default=Fraction(0))
-    bpm = stream.tempos()[0].bpm.value.data
-    return float(end) * 60 / bpm
+    return seconds_at(end, stream_points(module))
 
 
 def cmd_render(args: argparse.Namespace) -> int:
@@ -257,6 +265,101 @@ def cmd_watch(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
 
 
+def _edit_spec(text: str) -> dict:
+    """ "[level:]target:field=value", the value read as JSON when it is JSON."""
+    place, sep, value = text.partition("=")
+    if not sep:
+        raise SystemExit(f"error: an edit is target:field=value, not {text!r}")
+    parts = place.split(":")
+    if len(parts) == 2:
+        parts.insert(0, "intent")
+    if len(parts) != 3:
+        raise SystemExit(f"error: an edit is [level:]target:field=value, not {text!r}")
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = value
+    return {"level": parts[0], "target": parts[1], "field": parts[2], "value": parsed}
+
+
+def _agent_call(function, **arguments) -> int:
+    from pypulang.agent import ToolError, plain
+
+    try:
+        result = function(**arguments)
+    except ToolError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    print(result if isinstance(result, str) else json.dumps(plain(result), indent=1))
+    return 0
+
+
+def cmd_variations(args: argparse.Namespace) -> int:
+    from pypulang.agent import variations
+
+    found = variations(str(args.song))
+    if not found:
+        print("No variations.")
+    for site, info in found.items():
+        print(f"{site}:")
+        names = ["source", *(a["name"] for a in info["alternatives"])]
+        notes = {a["name"]: a["description"] for a in info["alternatives"]}
+        for name in names:
+            mark = "*" if info["picked"] == name else " "
+            print(f"  {mark} {name}" + (f"  {notes[name]}" if notes.get(name) else ""))
+    return 0
+
+
+def cmd_propose(args: argparse.Namespace) -> int:
+    from pypulang.agent import propose
+
+    return _agent_call(
+        propose,
+        song=str(args.song),
+        site=args.site,
+        name=args.name,
+        edits=[_edit_spec(e) for e in args.edits],
+        description=args.description,
+        author=args.author,
+    )
+
+
+def cmd_pick(args: argparse.Namespace) -> int:
+    from pypulang.agent import pick
+
+    return _agent_call(pick, song=str(args.song), site=args.site, name=args.name)
+
+
+def cmd_audition(args: argparse.Namespace) -> int:
+    from pypulang.agent import audition
+
+    return _agent_call(
+        audition,
+        song=str(args.song),
+        site=args.site,
+        out_dir=args.output,
+        section=args.section,
+        port=args.port,
+    )
+
+
+def cmd_agent(args: argparse.Namespace) -> int:
+    from pypulang.agent import TOOLS
+
+    if args.tool not in TOOLS:
+        print(f"error: no tool {args.tool!r}; tools are {', '.join(TOOLS)}", file=sys.stderr)
+        return 1
+    arguments = json.loads(args.arguments) if args.arguments else {}
+    return _agent_call(TOOLS[args.tool], **arguments)
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from pypulang.mcp import serve
+
+    serve()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pulang", description="Compile music.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -313,6 +416,32 @@ def main(argv: list[str] | None = None) -> int:
 
     watch = with_port(command("watch", cmd_watch, "Push every time the file is saved"))
     watch.add_argument("--interval", type=float, default=0.5)
+
+    command("variations", cmd_variations, "List each site's alternatives and which is picked")
+    propose_cmd = command("propose", cmd_propose, "Keep an alternative at a site, unpicked")
+    propose_cmd.add_argument("site", help='Such as "chorus hook"')
+    propose_cmd.add_argument("name", help="The alternative's name")
+    propose_cmd.add_argument("edits", nargs="+", help="[level:]target:field=value, one or more")
+    propose_cmd.add_argument("--description", default="")
+    propose_cmd.add_argument("--author", default="")
+    pick_cmd = command("pick", cmd_pick, "Choose an alternative at a site")
+    pick_cmd.add_argument("site")
+    pick_cmd.add_argument("name", help='An alternative, or "source"')
+    audition_cmd = with_port(
+        command("audition", cmd_audition, "Render every alternative at a site, for comparing")
+    )
+    audition_cmd.add_argument("site")
+    audition_cmd.add_argument("-o", "--output", required=True, help="A folder for the WAVs")
+    audition_cmd.add_argument("--section", help='An occurrence to hear it in, such as "chorus#1"')
+
+    agent_cmd = commands.add_parser("agent", help="Run one agent tool: JSON in, JSON out")
+    agent_cmd.add_argument(
+        "tool", help="describe, ir, review, variations, edit, drop, propose, pick, ..."
+    )
+    agent_cmd.add_argument("arguments", nargs="?", help='Its arguments as JSON, {"song": ...}')
+    agent_cmd.set_defaults(handler=cmd_agent)
+    mcp_cmd = commands.add_parser("mcp", help="Serve the agent tools over MCP on stdio")
+    mcp_cmd.set_defaults(handler=cmd_mcp)
 
     args = parser.parse_args(argv)
     try:

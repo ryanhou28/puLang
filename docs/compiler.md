@@ -50,6 +50,13 @@ pulang render song.py -o song.wav    # bounce it
 pulang stems song.py -o stems/       # bounce each track alone, and measure them
 pulang save song.py 'C:\songs\x.kaidaw'
 pulang watch song.py                 # push on every save
+
+pulang variations song.py            # each site's alternatives, and which is picked
+pulang propose song.py "chorus hook" hook-b 'motif/hook:notes=3/4 2/8 1 ...'
+pulang pick song.py "chorus hook" hook-b
+pulang audition song.py "chorus hook" -o takes/
+pulang agent describe '{"song": "song.py"}'   # one agent tool, JSON in and out
+pulang mcp                           # the agent tools as an MCP server on stdio
 ```
 
 Install with `pip install -e .`, and start kaiDAW with `tools/build-windows.sh serve` from its
@@ -96,7 +103,12 @@ changes what every track in that section plays, and nothing else has to be told.
 |---|---|
 | `section.chart("Dm9 G13 \| Cmaj9 \| % \| A7alt")` | Harmony as a lead sheet. Loops to fill the section. |
 | `track.line("a4/8 c5 e5/4. r/8 \| g5/2~ g5/8 f5")` | A melody. Values carry over; `>` accent, `?` ghost, `'` staccato, `~` tie. `\|` checks the bar adds up. |
+| `song.motif("hook", "5/8 6 1'/4 7/8 5/4.")` | A short idea in scale degrees, for melodies to develop. See [Motifs](#motifs). |
+| `track.melody("hook; hook +1; hook inv end 1")` | A melody as motifs: stated, sequenced, inverted, answered, fitted to the chords. |
 | `grid(cell="x..o..x.", pitch=36)` | Drums on a step grid, in any meter. |
+| `song.section("outro", bars=4, tempo=110)` | A section's own tempo. One without plays at the piece's, so it is back "a tempo". |
+| `outro.ritardando(to=96, bars=2)`, `.accelerando(...)`, `.fermata(4, beat=0, hold=3)` | The tempo moving inside a section. See [Tempo](#tempo). |
+| `section.fill("tom run", beats=2, keep=("pedal",))` | A drum fill at the section's end, or `every=4` bars. See [Fills](#fills). |
 | `hits(cell="x-.x-.x.")` | The voicing on a rhythm: stabs, pads, written-out comping. |
 | `riff(cell=..., degrees="1 5 b7 1'")` | A line in chord degrees, so it follows the changes. |
 | `walking_bass`, `comp`, `solo_line` | Generators that see the chord, the next chord, and the bar. |
@@ -113,7 +125,7 @@ Passes run where you ask, through a song's `pipeline`:
 | Stage | Passes |
 |---|---|
 | `intent` | `Reharmonize` (tritone_sub, jazzify, modal_interchange, secondary_dominants), `Transpose` |
-| `event` | `Swing`, `Humanize`, `Accent`, `Pump`, `Bend` |
+| `event` | `Swing`, `Humanize`, `Accent`, `Pump`, `Bend`, `LayBack`, `Phrasing`, `Legato`, `Dynamics` |
 
 `Pump` ducks a track's fader on every hit of another. It makes the sidechain sound from a
 volume curve, so it needs no routing.
@@ -123,8 +135,113 @@ volume curve, so it needs no routing.
 person can redraw in the DAW, and each clip's lane is returned to rest before it ends. Run it
 after `Humanize`, so the bends follow the notes where they landed.
 
+The feel of a band is mostly where each player sits and how they shape a line. `LayBack`
+plays a track a constant number of ticks behind the beat (or ahead, negative): a bass on the
+beat and a lead 20 ticks behind sounds unhurried. `Phrasing` treats each run of notes between
+rests as a phrase and shapes its velocity, rising to its highest note and letting go after
+it, with the last note softest. `Legato` holds each note until the next begins, a few ticks
+into it so a synth with glide slides, and leaves real rests alone. `Dynamics` gives each
+section a mark, `pp` to `ff`, or a swell such as `p<f` that builds across the section;
+`mf` leaves velocities as written.
+
 A section's time signature and name reach kaiDAW too: its meter map shows 7/8 where the source
 says 7/8, and every section occurrence is a marker.
+
+## Motifs
+
+A melody written as notes has nothing to come back to. One written as motifs does: name a
+short idea once, in scale degrees, and a phrase states it and develops it.
+
+```python
+from pypulang import *
+from pypulang.pitches import A5, C5, E3, E4
+
+with piece(tempo=96, key="D minor", title="motifs") as song:
+    song.motif("hook", "5/8 6 1'/4 7/8 5/4. r/8")
+    song.motif("sigh", "3/4 2/2")
+    verse = song.section("verse", bars=8)
+    verse.chart("Dm9 | Gm9 | C7 | Fmaj7 | Bbmaj7 | Em7b5 | A7 | Dm9")
+    verse.track("lead", role=Role.MELODY).melody(
+        "hook; hook +1; hook inv end 1; rest 2; sigh x2", low=E4, high=A5
+    )
+    verse.track("keys", role=Role.HARMONY).pattern(comp).voicing("rootless", E3, C5)
+    song.form([verse])
+```
+
+A motif token is a degree 1-7, with `b` or `#` before it to alter it and `'` or `,` after it
+for an octave up or down, then a note value as in `line`. `!` is staccato; `>`, `?` and `~`
+are as in `line`. A phrase is placements separated by `;`, played one after another, and a
+placement is a motif and its developments, applied left to right:
+
+| Development | What it does |
+|---|---|
+| `+2`, `-1` | Sequence: every note moved by scale steps |
+| `^`, `v` | An octave above or below where the statement would otherwise sit; the range does not undo it |
+| `inv` | Inversion around the first note |
+| `rev` | Retrograde, rhythm included |
+| `x2`, `x1/2` | Augmentation and diminution |
+| `first 3`, `last 2` | A fragment |
+| `end 1` | End on a degree: the answer to a question |
+| `vary 3` | Passing and neighbour notes; the same number gives the same ornaments |
+| `early 8`, `late 16` | Anticipate or delay by a note value |
+| `rest 2` | A placement of silence |
+
+Degrees are read in the section's key, so a melody follows a key change or a transposition.
+The first placement sits in the octave whose tonic is nearest the middle of the range, and
+each later one in the octave nearest to where the line already is. The range is a strong
+preference: a sequence climbing a step past the top stays put, and one climbing further
+drops an octave. With `fit` (the default), a note on a strong beat or held for a beat that is
+a semitone above a tone of the chord under it moves to the nearest note that belongs, so a
+fourth held over a major chord resolves to the third; 9ths, 11ths over minor chords, and 13ths
+are kept.
+
+Motifs and phrases are edits at the intent level too: `motif/hook` with field `notes` changes
+every place the motif is used, and a track's `melody` field changes its phrase. The companion
+page shows both for a melody track.
+
+## Fills
+
+A drummer stops keeping time at the end of a phrase and plays a figure that leads into the
+next downbeat. `section.fill` says so: for the fill's last beats of the section, or of every
+`every` bars, the drum tracks rest, except those in `keep`, and the fill's cells play on the
+tracks it names.
+
+```python
+from pypulang import *
+
+with piece(tempo=126, key="D minor", title="fills") as song:
+    verse = song.section("verse", bars=8)
+    verse.chart("Dm9 | Gm9 | Em7b5 | A7b9")
+    verse.track("ride", role=Role.RHYTHM).pattern(grid(cell="x...x.x.x...x.x.", pitch=51))
+    verse.track("pedal", role=Role.RHYTHM).pattern(grid(cell="....x.......x...", pitch=44))
+    verse.track("snare", role=Role.RHYTHM).pattern(grid(cell="............x...", pitch=38))
+    verse.track("kick", role=Role.RHYTHM).pattern(grid(cell="x.......x.......", pitch=36))
+    verse.fill("setup", beats=1, every=4, keep=("pedal",))
+    verse.fill({"snare": "o.o.ox..", "tom_low": "......xX"}, beats=2, pitches={"tom_low": 45})
+    song.form([verse])
+```
+
+The named fills size themselves to the beats they are given: `snare roll` (ghosted sixteenths
+rising to an accent), `tom run` (snare, then high tom, then low tom), `setup` (kick and snare
+on the last offbeats, the band's cue) and `stop` (one hit, then silence). They name their
+lanes as tracks: `snare`, `kick`, `tom_high`, `tom_low`, `crash`. A track that only plays in
+fills, such as a tom, takes its note from `pitches`; any other takes the note of its own
+grid. A cell shorter than the fill is lined up with its end.
+
+## Tempo
+
+A section can have its own tempo, and the tempo can move inside it. A section with no tempo
+of its own plays at the piece's, so the one after a ritardando is back "a tempo".
+`ritardando(to, bars)` and `accelerando(to, bars)` move the tempo gradually over a section's
+last bars, or from `at`; `fermata(bar, beat, hold)` plays a beat `hold` times as long, and
+the music picks up after it where it would have been, inside a ritardando too.
+
+kaiDAW's tempo changes are steps, so a gradual change is written as a step every half beat,
+each at the tempo of its middle, which keeps its length what a smooth change would take.
+The whole map reaches kaiDAW's tempo map and MIDI files, and every time puLang reports, such
+as `describe`'s form or a render window, is read through it. A song whose tempo never moves
+has no tempo map in its IR and lowers exactly as before. A section's tempo is an intent edit,
+`verse` with field `tempo`, so a variation or an agent can try a section faster or slower.
 
 ## Voice leading
 
@@ -204,8 +321,11 @@ were made at, as edits of the IR, and applied by a pass when the song compiles:
 
 | Level | Target | Fields | Reaches |
 |---|---|---|---|
+| intent | `verse` | `tempo` | the section's bpm; none plays it at the piece's tempo |
+| intent | `verse/harmony` | `chart` | the whole progression, as a chord chart; a short one loops |
 | intent | `verse/harmony@3+0` (the chord starting at bar 3, beat 0) | `chord` | every occurrence of the section |
-| intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern` | every occurrence |
+| intent | `verse/keys` | `voicing`, `octave`, `velocity`, `muted`, `pattern`, `melody` | every occurrence |
+| intent | `motif/hook` | `notes` | every place the motif is used |
 | score | `verse#2/harmony@3+0` | `chord` | the second verse only; voiced in context |
 | score | `verse#2/keys/c4` | `pitches` | the exact notes of one chord in one part |
 
@@ -229,6 +349,65 @@ the hand edits it reproduces exactly and how many notes nobody touched it would 
 A chord the edited notes spell is offered together with the voicing as played, because a new
 chord on its own would be voiced afresh: the pair keeps the notes and tells the other parts
 what the harmony now is. Keeping a reading drops the note edits it explains.
+
+Hand edits to a melody written in motifs are read back the same way. Each sounding note is
+traced to its statement in the phrase and to the note of the motif as written it came from,
+through every development, so a dragged note can mean the motif itself changed, everywhere
+it is used, or that one statement moved: a step up (`hook +2`), an octave (`hook ^`), or a
+new last note (`hook end 6`), in every occurrence of the section. A pitch change is read in
+scale steps and undone through inversions; a move or a new length is undone through
+stretching, to the nearest sixteenth or triplet eighth. Each reading is checked by
+lowering like the others, and shown with how many notes nobody touched it would also
+change, which is how a motif rewrite, which reaches every chorus, ranks against a
+change to one phrase.
+
+## Variations
+
+A variation is an alternative for one place in a song: a named bundle of the edits above,
+at a site such as "chorus hook" or "verse harmony". Anyone can propose one, a person or an
+agent, and the source is always the first alternative at every site. Proposing keeps the
+bundle in the song's overrides without playing it; picking one makes every compile apply
+its edits. Chosen variations apply before hand edits, so a hand edit still has the last
+word. Alternatives at one site replace each other, and picking `source` goes back to the
+song as written.
+
+```sh
+pulang propose song.py "chorus hook" hook-high "motif/hook:notes=1'/8 7 6 5/4. 3/8" \
+    --description "from the octave down"
+pulang audition song.py "chorus hook" -o takes/   # source.wav, hook-high.wav, ...
+pulang pick song.py "chorus hook" hook-high
+```
+
+A bundle is checked by compiling the song with it before it is kept, and is refused if the
+compiler rejects it, if it aims at a place the song does not have, or if it changes no
+notes. It is described by what it does: which section occurrences and parts change, and how
+many notes. `audition` renders the source and every alternative at a site through kaiDAW
+over the same bars, the first occurrence any of them touches with a bar before it, so they
+can be compared directly, and pushes the song back as picked when it is done. The companion
+page in kaiDAW's source tab lists the sites and picks with one click.
+
+## Agent tools
+
+An agent cannot hear a song, but it can read one at every level, change it at the level a
+change belongs to, propose alternatives for a person to hear and pick, review the result,
+and render a window to measure. `pypulang.agent` does each of those to a song file and
+returns plain data:
+
+| Tool | What it does |
+|---|---|
+| `describe` | The song in one read: form with bars and times, each section's chart, every track's part, motifs, edits, variations |
+| `ir` | The IR at one stage, optionally one section |
+| `review` | The compiler's read-through, and each melody's range and density per section |
+| `edit`, `drop` | Change one thing above the notes and keep it, or forget it |
+| `propose`, `pick`, `drop_variation`, `variations` | Variations, as above |
+| `readings`, `keep_reading` | Pull the hand edits in a clip from kaiDAW and read them above the notes, as the companion page does; keep one |
+| `render` | Push to kaiDAW and bounce a section occurrence, some bars, or the song, with its levels |
+| `audition` | Render every alternative at a site |
+
+Every change is checked by compiling before it is kept and comes back with the notes it
+changed and any warning it brought. The same tools are `pulang agent <tool> '<json>'` for
+scripts and `pulang mcp`, a Model Context Protocol server on stdio, for an agent such as
+Claude Code: `claude mcp add pulang -- pulang mcp`.
 ## Audio and samples
 
 A section can play an audio file on a track, and a rack can be a sampler with files on its
@@ -257,6 +436,36 @@ Push imports each file into kaiDAW's media pool once, and again only if it chang
 or the server has lost it. Audio clips follow the rule notes and parameters follow: one moved
 or deleted in the DAW stays that way, and one is changed only when its source changes.
 Paths are relative to the song file. kaiDAW reads WAV, AIFF and FLAC.
+
+The example songs play sampled drums: `fusion_rack(song, kit="samples/jazz")` and
+`future_bass_rack(song, kit="samples/future")` put one sampler per drum track, on the keys
+the Surge stand-ins used, with gains measured so each drum sits where its stand-in did.
+The kits are not in the repository. `python scripts/get_drum_samples.py` builds them into
+`examples/songs/samples/` from their sources in about half a minute: a jazz kit from
+[Virtuosity Drums](https://versilian-studios.com/virtuosity-drums/) (CC0), each hit mixed
+from its close, overhead and room mics, read straight out of the 1.2 GB archive with range
+requests; and a future-bass kit of CC0 Kickmess kicks and TR-909 hits by F9 Audio, which are
+free to use but not to redistribute. Without a `kit`, the racks use the Surge drums.
+
+Acoustic instruments are sampled the same way. `sampled("keys", "piano")` is a sampler with a
+zone per sample, each key playing the nearest one: `piano` (a Steinway B), `upright_bass`
+(pizzicato), `vibes`, `muted_trumpet`, `trumpet`, `trumpet_stab`, `trombone`, `trombone_stab`,
+`tenor_sax`, and `strings` (cellos, violas and violins across the range), from
+`pypulang.sounds.instruments`. `python scripts/get_instrument_samples.py` builds them into
+`examples/songs/samples/instruments/` from two CC0 libraries, the
+[Versilian Community Sample Library](https://github.com/sgossner/VCSL) and
+[VSCO 2 Community Edition](https://github.com/sgossner/VSCO-2-CE), downloading only the
+seconds each sample keeps. Most instruments are recorded at more than one dynamic, and
+kaiDAW's sampler picks a sample by how hard a key is played as well as which key, so a soft
+piano note plays a softly played recording: the piano has three layers, the brass, strings
+and vibes a soft one under the main one, the tenor a loud one over it. Layers are levelled
+to the same loudness, so velocity sets the level and the layer the tone. Notes fade over
+the instrument's release when they end, a quarter of a second for the piano. A note held
+longer than its sample (six seconds for sustained sounds) runs out. A kaiDAW built before
+velocity layers takes `sampled(..., layers=False)`, the main layer alone; a song that uses
+neither layers nor releases sends neither, so it pushes to any kaiDAW. The tables name the
+note each sample really sounds, checked with a pitch detector, since most of these libraries call
+middle C "C3".
 
 ## Sound
 
@@ -322,9 +531,14 @@ What exists and is tested:
 | Lowerings | All four, held note for note to the original realizer on the examples and on 150 generated pieces |
 | Voicing | Seven strategies and exact voice leading |
 | Harmony | Chart symbols, altered tensions, slash bass, reharmonization, transposition |
-| Performance | Swing, humanize, accent, pump, bend |
+| Melody | Motifs in scale degrees, developed in phrases and fitted to the chords |
+| Performance | Swing, humanize, accent, pump, bend, lay-back, phrasing, legato, dynamics marks |
+| Tempo | Per-section tempo, ritardando, accelerando and fermatas, through to kaiDAW's tempo map and MIDI |
+| Drums | Grids, and fills at a section's end or every few bars |
 | kaiDAW | Push, pull, status, overrides, render, stems, save and reopen; time signatures, section markers, the master fader, pitch bend and CC lanes, whole Surge patches |
 | Editing above the notes | Intent and score edits kept at their level; `pulang serve` traces a DAW note up every level; hand edits read back as chords, voicings, octaves, velocity and mutes, each checked by lowering |
+| Variations | Alternatives as bundles of edits at a site, proposed, auditioned and picked; the source always one of them |
+| Agent tools | Describe, IR, review, edit, propose, pick, render, audition, over a JSON CLI and an MCP server |
 | Audio | Files on tracks per section, and samplers with files on keys, imported into kaiDAW's pool |
 | Review | Melody against harmony, ranges, parallels |
 

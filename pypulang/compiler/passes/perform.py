@@ -281,3 +281,199 @@ class Bend(ModulePass):
         if points:
             points.sort(key=lambda p: p[0])
             track.body.block.add_op(event.CurveOp("midi.pitchbend", points))
+
+
+def _onsets(notes: list[event.NoteOp]) -> list[list[event.NoteOp]]:
+    """Notes grouped by start time, in time order: a chord is one onset."""
+    groups: dict[Fraction, list[event.NoteOp]] = {}
+    for note in notes:
+        groups.setdefault(note.start.data, []).append(note)
+    return [groups[start] for start in sorted(groups)]
+
+
+def _by_track(
+    module: ModuleOp, tracks: tuple[str, ...], sections: tuple[str, ...]
+) -> list[list[event.NoteOp]]:
+    selected = {id(n) for n in _selected(module, tracks, sections)}
+    return [
+        [n for n in track.notes() if id(n) in selected]
+        for track in _stream(module).tracks()
+        if not tracks or track.track.data in tracks
+    ]
+
+
+@dataclass(frozen=True)
+class LayBack(ModulePass):
+    """
+    Play a track a constant amount behind the beat, or ahead of it.
+
+    Where each player sits against the beat is much of a band's feel: a bass on the
+    beat and a singer a little behind it sounds unhurried, a drummer ahead of it
+    sounds urgent. Run it after `Swing`, so the swung notes move together.
+
+    Args:
+        ticks: How far behind, in 1/960 of a beat; negative plays ahead (default 20)
+        tracks: Only these tracks (default all)
+        sections: Only these sections (default all)
+    """
+
+    name = "lay-back"
+    ticks: int = 20
+    tracks: tuple[str, ...] = ()
+    sections: tuple[str, ...] = ()
+
+    def apply(self, ctx: Context, op: ModuleOp) -> None:
+        shift = Fraction(self.ticks, PPQ)
+        for note in _selected(op, self.tracks, self.sections):
+            _set_time(note, max(note.start.data + shift, Fraction(0)), note.dur.data)
+
+
+@dataclass(frozen=True)
+class Phrasing(ModulePass):
+    """
+    Shape a line's dynamics by phrase, the way a player breathes.
+
+    A rest of at least `gap` beats ends a phrase. Across each phrase the velocity
+    rises to its highest note and falls away after it, and its last note is
+    softer still, so a phrase arrives somewhere and lets go rather than being
+    played at one level throughout.
+
+    Args:
+        depth: The difference in velocity between a phrase's peak and its ends (default 14)
+        ending: Taken off a phrase's last note on top of that (default 8)
+        gap: A rest at least this long ends a phrase, in beats (default "1/2")
+        tracks: Only these tracks (default all)
+        sections: Only these sections (default all)
+    """
+
+    name = "phrasing"
+    depth: int = 14
+    ending: int = 8
+    gap: str = "1/2"
+    tracks: tuple[str, ...] = ()
+    sections: tuple[str, ...] = ()
+
+    def apply(self, ctx: Context, op: ModuleOp) -> None:
+        gap = Fraction(self.gap)
+        for notes in _by_track(op, self.tracks, self.sections):
+            phrase: list[list[event.NoteOp]] = []
+            end = None
+            for onset in _onsets(notes):
+                if phrase and end is not None and onset[0].start.data - end >= gap:
+                    self._shape(phrase)
+                    phrase = []
+                phrase.append(onset)
+                end = max(n.start.data + n.dur.data for n in onset)
+            if phrase:
+                self._shape(phrase)
+
+    def _shape(self, phrase: list[list[event.NoteOp]]) -> None:
+        if len(phrase) < 2:
+            return
+        heights = [max(n.pitch.value.data for n in onset) for onset in phrase]
+        peak = heights.index(max(heights))
+        last = len(phrase) - 1
+        for index, onset in enumerate(phrase):
+            if index <= peak:
+                rise = Fraction(index, peak) if peak else Fraction(1)
+            else:
+                rise = Fraction(last - index, last - peak)
+            change = round(self.depth * (rise - Fraction(1, 2)))
+            if index == last:
+                change -= self.ending
+            for note in onset:
+                _set_velocity(note, note.vel.value.data + change)
+
+
+@dataclass(frozen=True)
+class Legato(ModulePass):
+    """
+    Join a line's notes: each is held until the next begins.
+
+    Args:
+        overlap: Ticks each note runs into the next (default 10). A synth with glide
+            slides between overlapping notes; a repeated pitch never overlaps itself.
+        max_gap: Only a note followed within this many beats is held on, so a
+            real rest stays a rest (default "1/2")
+        tracks: Only these tracks (default all)
+        sections: Only these sections (default all)
+    """
+
+    name = "legato"
+    overlap: int = 10
+    max_gap: str = "1/2"
+    tracks: tuple[str, ...] = ()
+    sections: tuple[str, ...] = ()
+
+    def apply(self, ctx: Context, op: ModuleOp) -> None:
+        reach = Fraction(self.max_gap)
+        overlap = Fraction(self.overlap, PPQ)
+        for notes in _by_track(op, self.tracks, self.sections):
+            onsets = _onsets(notes)
+            for current, following in zip(onsets, onsets[1:], strict=False):
+                next_start = following[0].start.data
+                next_pitches = {n.pitch.value.data for n in following}
+                for note in current:
+                    start = note.start.data
+                    if next_start - (start + note.dur.data) > reach:
+                        continue
+                    extra = Fraction(0) if note.pitch.value.data in next_pitches else overlap
+                    _set_time(note, start, next_start - start + extra)
+
+
+_LEVELS = {
+    "pp": Fraction(11, 20),
+    "p": Fraction(7, 10),
+    "mp": Fraction(17, 20),
+    "mf": Fraction(1),
+    "f": Fraction(23, 20),
+    "ff": Fraction(13, 10),
+}
+
+
+def _mark(text: str) -> tuple[Fraction, Fraction]:
+    """ "p" -> (p, p); "p<f" -> (p, f)."""
+    for sign in "<>":
+        if sign in text:
+            start, _, end = text.partition(sign)
+            levels = (_LEVELS.get(start.strip()), _LEVELS.get(end.strip()))
+            if None in levels or (sign == "<") != (levels[1] > levels[0]):
+                break
+            return levels[0], levels[1]
+    else:
+        if text.strip() in _LEVELS:
+            level = _LEVELS[text.strip()]
+            return level, level
+    raise ValueError(
+        f"{text!r} is not a dynamic: use pp, p, mp, mf, f or ff, or a swell such as p<f or f>p"
+    )
+
+
+@dataclass(frozen=True)
+class Dynamics(ModulePass):
+    """
+    How loud each section is played, as dynamics marks.
+
+    Velocities are scaled against mf, which leaves them as written. A swell such as
+    "p<f" moves from one level to the other across the section, so a pre-chorus
+    can build into a chorus and an outro fade into silence.
+
+    Args:
+        marks: (section, mark) pairs, such as (("verse", "p"), ("pre", "p<f"))
+        tracks: Only these tracks (default all, drums included)
+    """
+
+    name = "dynamics"
+    marks: tuple[tuple[str, str], ...] = ()
+    tracks: tuple[str, ...] = ()
+
+    def apply(self, ctx: Context, op: ModuleOp) -> None:
+        marks = {section: _mark(text) for section, text in self.marks}
+        spans = {s.tag.data: (s.at.data, s.length.data) for s in _stream(op).sections()}
+        for note in _selected(op, self.tracks, tuple(marks)):
+            tag = loc_key(note.location).partition("/")[0]
+            begin, end = marks[tag.partition("#")[0]]
+            at, length = spans.get(tag, (note.start.data, Fraction(1)))
+            through = min(max((note.start.data - at) / length, Fraction(0)), Fraction(1))
+            level = begin + (end - begin) * through
+            _set_velocity(note, round(note.vel.value.data * level))

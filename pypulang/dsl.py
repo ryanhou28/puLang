@@ -17,28 +17,34 @@ from enum import Enum
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Union
 
-from pypulang.harmony import parse_chart
+from pypulang.fills import fill_cells
+from pypulang.harmony import chart_changes
 from pypulang.ir.intent import (
     AudioPlacement,
     Chord,
     ChordChange,
     Curve,
     Device,
+    Fill,
     Harmony,
     Key,
+    Melody,
     Note,
     Notes,
     Pattern,
     Piece,
     Rack,
     Section,
+    TempoChange,
     TimeSignature,
     Track,
     TrackContent,
 )
 from pypulang.lines import parse_line
+from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.reharm import reharmonize as reharmonize_changes
 from pypulang.reharm import transposed_key
+from pypulang.rhythm import read_cell
 
 if TYPE_CHECKING:
     import mido
@@ -383,6 +389,13 @@ solo_line = PatternBuilder("solo_line")
 _NOTE_VALUE_PARAMS = ("rate", "hihat_rate", "step")
 
 
+def _bpm(value: float) -> float:
+    """A tempo, checked: puLang plays from 20 to 400 bpm."""
+    if not 20 <= float(value) <= 400:
+        raise ValueError(f"A tempo of {value} bpm is outside 20 to 400")
+    return float(value)
+
+
 def note_value_to_beats(value: Fraction | float | int | str) -> Fraction:
     """
     Convert a written note value to quarter-note beats, the unit of the IR.
@@ -549,6 +562,28 @@ class TrackBuilder:
         self._content = Notes(notes=notes)
         return self
 
+    def melody(self, phrase: str, low: int = 60, high: int = 84, fit: bool = True) -> TrackBuilder:
+        """
+        Play a phrase made of the piece's motifs. See `pypulang.motifs`.
+
+        Args:
+            phrase: Placements separated by ";", each a motif and its developments,
+                such as "hook; hook +1; hook inv end 1; rest 2"
+            low: Lowest MIDI pitch the line goes to, such as C4
+            high: Highest MIDI pitch
+            fit: Move a note held on a strong beat that clashes with the chord onto it
+
+        The notes are scale degrees of the section's key, so the melody follows a
+        key change or a transposition, and are placed against the section's chords.
+
+        Example:
+            p.motif("hook", "5/8 6 1'/4 7/8 5/4.")
+            verse.track("lead", role=Role.MELODY).melody("hook; hook -1; hook end 1")
+        """
+        parse_phrase(phrase)  # report a mistake here rather than at compile time
+        self._content = Melody(phrase=phrase, low=int(low), high=int(high), fit=fit)
+        return self
+
     def voicing(self, name: str, low: int | None = None, high: int | None = None) -> TrackBuilder:
         """
         Choose how this track voices its chords.
@@ -646,6 +681,9 @@ class SectionBuilder:
         self._tracks: list[TrackBuilder] = []
         self._curves: list[Curve] = []
         self._audio: list[AudioPlacement] = []
+        self._fills: list[Fill] = []
+        self._tempo: float | None = None
+        self._tempo_changes: list[TempoChange] = []
 
     @property
     def name(self) -> str:
@@ -715,19 +753,7 @@ class SectionBuilder:
             section.chart("Dm9 G13 | Cmaj9 | Em7 A7b13 | Dm9 G7alt")
         """
         key = self._key or self._piece._key
-        parsed = parse_chart(chart, key)
-        bars_in_chart = sum(Fraction(*fraction) for _, fraction in parsed)
-        changes = []
-        filled = Fraction(0)
-        while filled < self._bars:
-            for chord, fraction in parsed:
-                if filled >= self._bars:
-                    break
-                duration = min(Fraction(*fraction), self._bars - filled)
-                changes.append(ChordChange(chord=chord, duration=duration))
-                filled += duration
-            if bars_in_chart == 0:
-                break
+        changes = [ChordChange(chord=c, duration=d) for c, d in chart_changes(chart, key, self._bars)]
         self._harmony = Harmony(changes=changes, duration_unit="bars")
         return self
 
@@ -809,6 +835,9 @@ class SectionBuilder:
                 )
             section._tracks.append(copied)
         section._curves = list(self._curves)
+        section._fills = list(self._fills)
+        section._tempo = self._tempo
+        section._tempo_changes = list(self._tempo_changes)
         return section
 
     def automate(
@@ -874,6 +903,100 @@ class SectionBuilder:
         )
         return self
 
+    def fill(
+        self,
+        fill: str | dict[str, str],
+        beats: float | Fraction = 2,
+        every: int | None = None,
+        step: float | Fraction = Fraction(1, 16),
+        keep: tuple[str, ...] | list[str] = (),
+        pitches: dict[str, int] | None = None,
+        velocity: int = 96,
+    ) -> SectionBuilder:
+        """
+        A drum fill at the end of this section, or at the end of every few bars.
+
+        The drum tracks stop keeping time for the fill's beats, except those in
+        `keep`, and the fill plays on the tracks it names. See `pypulang.fills`.
+
+        Args:
+            fill: A named fill ("snare roll", "tom run", "setup", "stop"), or track
+                names to rhythm cells, such as {"snare": "o.o.oxxX"}
+            beats: How long it is, in beats
+            every: Fill at the end of every this many bars, as well as the section's end
+            step: The note value of one step of a cell (default 1/16)
+            keep: Drum tracks that keep playing, such as a hi-hat on two and four
+            pitches: The MIDI note of a track that has no drum pattern here, such as a tom
+            velocity: How hard the fill is played
+
+        Example:
+            chorus.fill("tom run", beats=2, keep=("pedal",), pitches={"tom_high": 48})
+        """
+        beats = Fraction(beats).limit_denominator(96)
+        step = note_value_to_beats(step)
+        cells = fill_cells(fill, int(beats / step)) if isinstance(fill, str) else dict(fill)
+        for cell in cells.values():
+            read_cell(cell)  # report a mistake here rather than at compile time
+        self._fills.append(
+            Fill(
+                cells=cells,
+                beats=beats,
+                every=every,
+                step=step,
+                keep=list(keep),
+                pitches=dict(pitches or {}),
+                velocity=velocity,
+            )
+        )
+        return self
+
+    def _bar_beats(self) -> Fraction:
+        return (self._time_signature or self._piece._time_signature).beats_per_bar
+
+    def ritardando(self, to: float, bars: float = 2, at: float | None = None) -> SectionBuilder:
+        """
+        Slow down gradually to `to` bpm.
+
+        Args:
+            to: The bpm it arrives at, which holds to the section's end
+            bars: Over how many bars
+            at: The bar it starts in, counted from 1; default the last `bars` bars
+        """
+        return self._ramp(to, bars, at)
+
+    def accelerando(self, to: float, bars: float = 2, at: float | None = None) -> SectionBuilder:
+        """Speed up gradually to `to` bpm. Arguments as for `ritardando`."""
+        return self._ramp(to, bars, at)
+
+    def _ramp(self, to: float, bars: float, at: float | None) -> SectionBuilder:
+        span = Fraction(bars).limit_denominator(64)
+        first = Fraction(self._bars) - span + 1 if at is None else Fraction(at).limit_denominator(64)
+        if first < 1 or first - 1 + span > self._bars:
+            raise ValueError(f"{self._name}: a change over bars {first} to {first + span - 1} "
+                             f"does not fit in {self._bars} bars")
+        self._tempo_changes.append(
+            TempoChange("ramp", (first - 1) * self._bar_beats(), span * self._bar_beats(), _bpm(to))
+        )
+        return self
+
+    def fermata(self, bar: int, beat: float = 0, hold: float = 2, beats: float = 1) -> SectionBuilder:
+        """
+        Hold a moment: the `beats` from `beat` of `bar` last `hold` times as long.
+
+        Args:
+            bar: Bar counted from 1
+            beat: Quarter notes into the bar
+            hold: How many times longer, such as 2 or 3
+            beats: How long the held moment is, in quarter notes
+        """
+        if hold <= 0:
+            raise ValueError("A fermata holds a moment longer: `hold` must be above 0")
+        at = (bar - 1) * self._bar_beats() + Fraction(beat).limit_denominator(64)
+        self._tempo_changes.append(
+            TempoChange("hold", at, Fraction(beats).limit_denominator(64), float(hold))
+        )
+        return self
+
     def _to_ir(self) -> Section:
         """Convert to IR Section object."""
         return Section(
@@ -885,6 +1008,9 @@ class SectionBuilder:
             tracks=[t._to_ir() for t in self._tracks],
             curves=list(self._curves),
             audio=list(self._audio),
+            fills=list(self._fills),
+            tempo=self._tempo,
+            tempo_changes=list(self._tempo_changes),
         )
 
 
@@ -927,6 +1053,7 @@ class PieceBuilder:
         self._sections: list[SectionBuilder] = []
         self._form: list[str] | None = None
         self._racks: list[Rack] = []
+        self._motifs: dict[str, str] = {}
 
     def section(
         self,
@@ -934,6 +1061,7 @@ class PieceBuilder:
         bars: int,
         key: str | Key | None = None,
         time_sig: str | TimeSignature | None = None,
+        tempo: float | None = None,
     ) -> SectionBuilder:
         """
         Create a section in this piece.
@@ -943,6 +1071,8 @@ class PieceBuilder:
             bars: Length in bars
             key: Override key for this section (optional)
             time_sig: Override time signature (optional)
+            tempo: This section's bpm. A section with none plays at the piece's
+                tempo, so the one after a ritardando is back "a tempo".
         """
         section_key = None
         if key is not None:
@@ -961,6 +1091,7 @@ class PieceBuilder:
             key=section_key,
             time_signature=section_time_sig,
         )
+        section._tempo = _bpm(tempo) if tempo is not None else None
         self._sections.append(section)
         return section
 
@@ -1000,6 +1131,23 @@ class PieceBuilder:
         )
         return self
 
+    def motif(self, name: str, notes: str) -> PieceBuilder:
+        """
+        Name a short melodic idea, written in scale degrees, for melodies to use.
+
+        Args:
+            name: What phrases call it
+            notes: Degrees 1-7 with note values, as in "5/8 6 1'/4 7/8 5/4. r/8".
+                "b"/"#" before a degree alter it; "'" after it is an octave up and ","
+                an octave down. See `pypulang.motifs`.
+
+        Example:
+            p.motif("hook", "5/8 6 1'/4 7/8 5/4.")
+        """
+        parse_motif(notes)  # report a mistake here rather than at compile time
+        self._motifs[name] = notes
+        return self
+
     def form(self, sections: list[SectionBuilder | str]) -> PieceBuilder:
         """
         Set the form (section order) for this piece.
@@ -1020,6 +1168,7 @@ class PieceBuilder:
             sections=[s._to_ir() for s in self._sections],
             form=self._form,
             racks=list(self._racks),
+            motifs=dict(self._motifs),
         )
 
     def to_midi(self, ticks_per_beat: int = 480) -> mido.MidiFile:

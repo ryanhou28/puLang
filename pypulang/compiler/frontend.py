@@ -6,7 +6,7 @@ from xdsl.dialects.builtin import ModuleOp
 
 from pypulang.compiler.dialects import daw, intent
 from pypulang.compiler.locs import name_loc
-from pypulang.ir.intent import Notes, Pattern, Piece, Rack, Section, Track
+from pypulang.ir.intent import Melody, Notes, Pattern, Piece, Rack, Section, Track
 
 
 def _track_op(section: Section, track: Track, harmony: intent.HarmonyOp | None) -> intent.TrackOp:
@@ -18,6 +18,12 @@ def _track_op(section: Section, track: Track, harmony: intent.HarmonyOp | None) 
             raise AssertionError("import_piece always makes a harmony op for patterns")
         op = intent.PatternOp(content.pattern_type, harmony.result, dict(content.params))
         op.location = name_loc(f"{section.name}/{track.name}/pattern")
+        body.append(op)
+    elif isinstance(content, Melody):
+        if harmony is None:
+            raise AssertionError("import_piece always makes a harmony op for melodies")
+        op = intent.MelodyOp(content.phrase, harmony.result, content.low, content.high, content.fit)
+        op.location = name_loc(f"{section.name}/{track.name}/melody")
         body.append(op)
     elif isinstance(content, Notes):
         notes = [
@@ -62,12 +68,25 @@ def _section_op(section: Section) -> intent.SectionOp:
         )
         audio_op.location = name_loc(f"{section.name}/{placed.track}/audio{index}")
         audio.append(audio_op)
+    fills = []
+    for index, fill in enumerate(section.fills):
+        fill_op = intent.FillOp(
+            fill.cells, fill.beats, fill.every, fill.step, fill.keep, fill.pitches, fill.velocity
+        )
+        fill_op.location = name_loc(f"{section.name}/fill{index}")
+        fills.append(fill_op)
+    tempos = []
+    for index, change in enumerate(section.tempo_changes):
+        tempo_op = intent.TempoOp(change.kind, change.at, change.length, change.value)
+        tempo_op.location = name_loc(f"{section.name}/tempo{index}")
+        tempos.append(tempo_op)
     op = intent.SectionOp(
         section.name,
         section.bars,
         section.key,
         section.time_signature,
-        [harmony, *tracks, *curves, *audio],
+        [harmony, *tracks, *curves, *audio, *fills, *tempos],
+        tempo=section.tempo,
     )
     op.location = name_loc(section.name)
     return op
@@ -86,13 +105,22 @@ def _rack_op(rack: Rack) -> daw.RackOp:
 
 def import_piece(piece: Piece) -> ModuleOp:
     """Build an `intent` module from a `Piece`."""
+    motifs = []
+    for name, notes in piece.motifs.items():
+        motif = intent.MotifOp(name, notes)
+        motif.location = name_loc(f"motif/{name}")
+        motifs.append(motif)
     op = intent.PieceOp(
         title=piece.title or "",
         tempo=piece.tempo,
         key=piece.key,
         meter=piece.time_signature,
         form=piece.form,
-        ops=[*[_rack_op(r) for r in piece.racks], *[_section_op(s) for s in piece.sections]],
+        ops=[
+            *[_rack_op(r) for r in piece.racks],
+            *motifs,
+            *[_section_op(s) for s in piece.sections],
+        ],
     )
     op.location = name_loc("piece")
     return ModuleOp([op])

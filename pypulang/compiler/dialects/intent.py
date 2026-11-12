@@ -5,10 +5,14 @@ Harmony is an SSA value, so a track says which chords it follows and a pass that
 rewrites the harmony reaches every track that uses it.
 
     intent.piece "song" tempo 120 key "G major" meter 4/4 {
+      intent.motif "hook" "5/8 6 1'/4 7/8 5/4."
       intent.section "verse" bars 8 {
         %0 = intent.harmony ...
         intent.track "bass" role "bass" {
           intent.pattern "root_eighths" over %0 ...
+        }
+        intent.track "lead" role "melody" {
+          intent.melody "hook; hook +1" over %0 range 64 to 84 fit 1
         }
       }
     }
@@ -96,6 +100,11 @@ class PieceOp(IRDLOperation):
     def sections(self) -> list[SectionOp]:
         return [op for op in self.body.block.ops if isinstance(op, SectionOp)]
 
+    def motifs(self) -> dict[str, str]:
+        return {
+            op.motif.data: op.notes.data for op in self.body.block.ops if isinstance(op, MotifOp)
+        }
+
 
 @irdl_op_definition
 class SectionOp(IRDLOperation):
@@ -106,10 +115,12 @@ class SectionOp(IRDLOperation):
     bars = prop_def(IntegerAttr)
     key = opt_prop_def(KeyAttr)
     meter = opt_prop_def(MeterAttr)
+    tempo = opt_prop_def(FloatAttr)
     body = region_def("single_block")
     traits = traits_def(NoTerminator())
     assembly_format = (
-        "$section `bars` $bars (`key` $key^)? (`meter` $meter^)? attr-dict-with-keyword $body"
+        "$section `bars` $bars (`key` $key^)? (`meter` $meter^)? (`tempo` $tempo^)? "
+        "attr-dict-with-keyword $body"
     )
 
     def __init__(
@@ -119,6 +130,7 @@ class SectionOp(IRDLOperation):
         key: Key | None,
         meter: TimeSignature | None,
         ops: Sequence[IRDLOperation],
+        tempo: float | None = None,
     ):
         props: dict[str, Attribute] = {
             "section": StringAttr(section),
@@ -128,6 +140,8 @@ class SectionOp(IRDLOperation):
             props["key"] = KeyAttr(key)
         if meter is not None:
             props["meter"] = MeterAttr(meter)
+        if tempo is not None:
+            props["tempo"] = float_attr(tempo)
         super().__init__(properties=props, regions=[Region(Block(ops))])
 
     def harmony(self) -> HarmonyOp | None:
@@ -144,6 +158,12 @@ class SectionOp(IRDLOperation):
 
     def audio(self) -> list[AudioOp]:
         return [op for op in self.body.block.ops if isinstance(op, AudioOp)]
+
+    def fills(self) -> list[FillOp]:
+        return [op for op in self.body.block.ops if isinstance(op, FillOp)]
+
+    def tempo_changes(self) -> list[TempoOp]:
+        return [op for op in self.body.block.ops if isinstance(op, TempoOp)]
 
 
 @irdl_op_definition
@@ -234,6 +254,50 @@ class PatternOp(IRDLOperation):
 
 
 @irdl_op_definition
+class MotifOp(IRDLOperation):
+    """A short idea in scale degrees, named so melodies can state and develop it."""
+
+    name = "intent.motif"
+    motif = prop_def(StringAttr)
+    notes = prop_def(StringAttr)
+    assembly_format = "$motif $notes attr-dict"
+
+    def __init__(self, motif: str, notes: str):
+        super().__init__(properties={"motif": StringAttr(motif), "notes": StringAttr(notes)})
+
+
+@irdl_op_definition
+class MelodyOp(IRDLOperation):
+    """
+    A phrase of motifs, fitted to the harmony it is given. See `pypulang.motifs`.
+
+    `low` and `high` are the MIDI range the line keeps to; `fit` is 1 when clashing
+    notes on strong beats move onto the chord.
+    """
+
+    name = "intent.melody"
+    phrase = prop_def(StringAttr)
+    low = prop_def(IntegerAttr)
+    high = prop_def(IntegerAttr)
+    fit = prop_def(IntegerAttr)
+    harmony = operand_def(HarmonyType)
+    assembly_format = (
+        "$phrase `over` $harmony `range` $low `to` $high `fit` $fit attr-dict `:` type($harmony)"
+    )
+
+    def __init__(self, phrase: str, harmony: SSAValue, low: int, high: int, fit: bool):
+        super().__init__(
+            operands=[harmony],
+            properties={
+                "phrase": StringAttr(phrase),
+                "low": IntegerAttr(low, i64),
+                "high": IntegerAttr(high, i64),
+                "fit": IntegerAttr(int(fit), i64),
+            },
+        )
+
+
+@irdl_op_definition
 class NotesOp(IRDLOperation):
     """Literal notes: the escape hatch from patterns."""
 
@@ -275,6 +339,78 @@ class NoteOp(IRDLOperation):
             props["vel"] = IntegerAttr(vel, i64)
         if art is not None:
             props["art"] = StringAttr(art)
+        super().__init__(properties=props)
+
+
+@irdl_op_definition
+class TempoOp(IRDLOperation):
+    """
+    A change of tempo inside a section, `at` beats from its start.
+
+    "ramp" moves to `value` bpm over `length` beats; "hold" plays the `length`
+    beats from `at` `value` times as long.
+    """
+
+    name = "intent.tempo"
+    kind = prop_def(StringAttr)
+    at = prop_def(RationalAttr)
+    length = prop_def(RationalAttr)
+    value = prop_def(FloatAttr)
+    assembly_format = "$kind `at` $at `for` $length `to` $value attr-dict"
+
+    def __init__(self, kind: str, at: Fraction, length: Fraction, value: float):
+        super().__init__(
+            properties={
+                "kind": StringAttr(kind),
+                "at": RationalAttr(Fraction(at)),
+                "length": RationalAttr(Fraction(length)),
+                "value": float_attr(value),
+            }
+        )
+
+
+@irdl_op_definition
+class FillOp(IRDLOperation):
+    """
+    A drum fill at the end of a section, or of every `every` bars.
+
+    `cells` maps a drum track to its rhythm cell over the fill; `keep` lists the
+    drum tracks that play on through it, and every other drum track rests there.
+    """
+
+    name = "intent.fill"
+    beats = prop_def(RationalAttr)
+    every = opt_prop_def(IntegerAttr)
+    step = prop_def(RationalAttr)
+    cells = prop_def(DictionaryAttr)
+    keep = prop_def(ArrayAttr[StringAttr])
+    pitches = prop_def(DictionaryAttr)
+    velocity = prop_def(IntegerAttr)
+    assembly_format = (
+        "$cells `for` $beats (`every` $every^)? `step` $step `keep` $keep "
+        "`pitches` $pitches `velocity` $velocity attr-dict"
+    )
+
+    def __init__(
+        self,
+        cells: dict[str, str],
+        beats: Fraction,
+        every: int | None,
+        step: Fraction,
+        keep: Sequence[str],
+        pitches: dict[str, int],
+        velocity: int,
+    ):
+        props: dict[str, Attribute] = {
+            "beats": RationalAttr(Fraction(beats)),
+            "step": RationalAttr(Fraction(step)),
+            "cells": to_attr(dict(cells)),
+            "keep": ArrayAttr([StringAttr(k) for k in keep]),
+            "pitches": to_attr({k: int(v) for k, v in pitches.items()}),
+            "velocity": IntegerAttr(velocity, i64),
+        }
+        if every is not None:
+            props["every"] = IntegerAttr(every, i64)
         super().__init__(properties=props)
 
 
@@ -353,6 +489,20 @@ class AudioOp(IRDLOperation):
 
 IntentDialect = Dialect(
     "intent",
-    [PieceOp, SectionOp, HarmonyOp, TrackOp, PatternOp, NotesOp, NoteOp, CurveOp, AudioOp],
+    [
+        PieceOp,
+        SectionOp,
+        HarmonyOp,
+        TrackOp,
+        PatternOp,
+        MotifOp,
+        MelodyOp,
+        NotesOp,
+        NoteOp,
+        CurveOp,
+        AudioOp,
+        FillOp,
+        TempoOp,
+    ],
     [HarmonyType],
 )

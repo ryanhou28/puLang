@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from pypulang.compiler.edits import Edit
+from pypulang.variations import SOURCE, Variation
 
 Note = list[int]  # [pitch, start, duration, velocity], ticks from the clip start
 
@@ -63,12 +64,17 @@ class Overrides:
 
     `edits` are edits made above the notes, such as a chord or a voicing, kept at the
     level they were made at. See `pypulang.compiler.edits`.
+
+    `variations` maps a name to a proposed bundle of such edits at a site, and
+    `choices` maps a site to the variation picked there. See `pypulang.variations`.
     """
 
     notes: dict[str, dict[str, Any]] = field(default_factory=dict)
     added: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     clips: dict[str, dict[str, Any]] = field(default_factory=dict)
     edits: list[dict[str, Any]] = field(default_factory=list)
+    variations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    choices: dict[str, str] = field(default_factory=dict)
 
     @property
     def count(self) -> int:
@@ -91,6 +97,30 @@ class Overrides:
         before = len(self.edits)
         self.edits = [e for e in self.edits if Edit.from_json(e).key != key]
         return len(self.edits) != before
+
+    def put_variation(self, variation: Variation) -> None:
+        """Keep a proposed variation, replacing one of the same name."""
+        if variation.name == SOURCE:
+            raise ValueError(f"{SOURCE!r} names the source itself; choose another name")
+        self.variations[variation.name] = variation.to_json()
+
+    def drop_variation(self, name: str) -> bool:
+        data = self.variations.pop(name, None)
+        if data is not None and self.choices.get(data["site"]) == name:
+            del self.choices[data["site"]]
+        return data is not None
+
+    def pick(self, site: str, name: str) -> None:
+        """Choose a variation at a site, or the source with "source"."""
+        if name == SOURCE:
+            self.choices.pop(site, None)
+            return
+        data = self.variations.get(name)
+        if data is None:
+            raise KeyError(f"No variation called {name!r}")
+        if data["site"] != site:
+            raise ValueError(f"{name!r} is a variation of {data['site']!r}, not {site!r}")
+        self.choices[site] = name
 
 
 class SongState:

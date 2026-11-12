@@ -75,7 +75,7 @@ def build(song, name):
 
 
 with piece(tempo=150, key="Ab major", title="Afterglow") as song:
-    future_bass_rack(song)
+    future_bass_rack(song, kit="samples/future")
 
     intro = song.section("intro", bars=8)
     intro.chart(LOOP)

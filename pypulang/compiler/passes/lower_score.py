@@ -39,7 +39,8 @@ class LowerScoreToEvent(ModulePass):
         if len(scores) != 1:
             raise ValueError(f"Expected one score.score, found {len(scores)}")
         top = scores[0]
-        ops: list = [event.TempoOp(Fraction(0), top.tempo.value.data)]
+        tempos = top.tempos() or [score.TempoOp(Fraction(0), top.tempo.value.data)]
+        ops: list = [event.TempoOp(t.at.data, t.bpm.value.data) for t in tempos]
         for section in top.sections():
             marker = event.SectionOp(
                 section.tag, section.start.data, section.length, section.meter.data

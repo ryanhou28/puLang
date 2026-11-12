@@ -384,8 +384,44 @@ class Notes:
         return cls(notes=[Note.from_dict(n) for n in d["notes"]])
 
 
+@dataclass
+class Melody:
+    """
+    A phrase of motifs in scale degrees, fitted to the harmony. See `pypulang.motifs`.
+
+    Attributes:
+        phrase: Placements separated by ";", such as "hook; hook +1; hook end 1"
+        low: Lowest MIDI pitch the line goes to
+        high: Highest MIDI pitch the line goes to
+        fit: Whether clashing notes on strong beats move onto the chord
+    """
+
+    phrase: str
+    low: int = 60
+    high: int = 84
+    fit: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": "melody",
+            "phrase": self.phrase,
+            "low": self.low,
+            "high": self.high,
+            "fit": self.fit,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Melody:
+        return cls(
+            phrase=d["phrase"],
+            low=d.get("low", 60),
+            high=d.get("high", 84),
+            fit=d.get("fit", True),
+        )
+
+
 # Type alias for track content
-TrackContent = Union[Pattern, Notes]
+TrackContent = Union[Pattern, Notes, Melody]
 
 
 # -----------------------------------------------------------------------------
@@ -446,6 +482,8 @@ class Track:
                 content = Pattern.from_dict(content_data)
             elif content_data.get("type") == "notes":
                 content = Notes.from_dict(content_data)
+            elif content_data.get("type") == "melody":
+                content = Melody.from_dict(content_data)
         return cls(
             name=d["name"],
             role=d.get("role", "harmony"),
@@ -560,6 +598,51 @@ class AudioPlacement:
 
 
 @dataclass
+class TempoChange:
+    """
+    A change of tempo inside a section.
+
+    Attributes:
+        kind: "ramp", a gradual change to `value` bpm over `length` beats (a
+            ritardando or accelerando); or "hold", the `length` beats starting at
+            `at` played `value` times as long (a fermata)
+        at: Beats from the section's start
+        length: Beats
+        value: The bpm a ramp reaches, or how many times longer a hold lasts
+    """
+
+    kind: str
+    at: Fraction
+    length: Fraction
+    value: float
+
+
+@dataclass
+class Fill:
+    """
+    A drum fill: the last `beats` of a section, or of every `every` bars, played as
+    these cells on these drum tracks while the other drum tracks rest.
+
+    Attributes:
+        cells: Track name to a rhythm cell, one step per `step` beats
+        beats: How long the fill is
+        every: Fill at the end of every this many bars; None for the section's end only
+        step: Beats per step
+        keep: Drum tracks that keep playing through the fill, such as a hi-hat foot
+        pitches: The MIDI note for a track that has no drum pattern in the section
+        velocity: Base velocity of the fill's hits
+    """
+
+    cells: dict[str, str]
+    beats: Fraction = Fraction(2)
+    every: int | None = None
+    step: Fraction = Fraction(1, 4)
+    keep: list[str] = field(default_factory=list)
+    pitches: dict[str, int] = field(default_factory=dict)
+    velocity: int = 96
+
+
+@dataclass
 class Curve:
     """
     A parameter moving during a section.
@@ -618,6 +701,9 @@ class Section:
     tracks: list[Track] = field(default_factory=list)
     curves: list[Curve] = field(default_factory=list)
     audio: list[AudioPlacement] = field(default_factory=list)
+    fills: list[Fill] = field(default_factory=list)
+    tempo: float | None = None
+    tempo_changes: list[TempoChange] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -664,6 +750,7 @@ class Piece:
         sections: List of sections
         form: Section names in order (None for linear order)
         racks: How each track sounds
+        motifs: Motif names to their notes in scale degrees, for melodies to use
     """
 
     tempo: float = 120.0
@@ -673,6 +760,7 @@ class Piece:
     title: str | None = None
     form: list[str] | None = None
     racks: list[Rack] = field(default_factory=list)
+    motifs: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -684,6 +772,7 @@ class Piece:
             "sections": [s.to_dict() for s in self.sections],
             "form": self.form,
             "racks": [r.to_dict() for r in self.racks],
+            "motifs": dict(self.motifs),
         }
 
     @classmethod
@@ -698,6 +787,7 @@ class Piece:
             sections=[Section.from_dict(s) for s in d.get("sections", [])],
             form=d.get("form"),
             racks=[Rack.from_dict(r) for r in d.get("racks", [])],
+            motifs=dict(d.get("motifs", {})),
         )
 
     def to_json(self) -> str:

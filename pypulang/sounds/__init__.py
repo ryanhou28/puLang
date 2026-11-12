@@ -42,7 +42,10 @@ __all__ = [
 
 
 def sampler(
-    name: str, sounds: dict[int, str | dict], one_shot: bool = True, gain_db: float = 0.0
+    name: str,
+    sounds: dict[int, str | dict] | list[dict],
+    one_shot: bool = True,
+    gain_db: float = 0.0,
 ) -> Device:
     """
     kaiDAW's sampler, with audio files on keys.
@@ -50,16 +53,23 @@ def sampler(
     Args:
         name: Local name, as for any device
         sounds: Key to a file path (relative to the song), or to a dict with "file" and
-            any of "root", "low", "high", "gain", "pan", "one_shot". A bare path plays
-            on its key alone, which is what a drum pad is.
+            any of "root", "low", "high", "gain", "pan", "one_shot", "low_velocity",
+            "high_velocity" and "release" (milliseconds after the note ends). A bare
+            path plays on its key alone, which is what a drum pad is. Or a list of
+            such dicts, each with its "root", for several sounds on one key, as an
+            instrument recorded at several dynamics has.
         one_shot: Whether a sound plays to its end however short the note is
         gain_db: The default gain of every sound
 
     Example:
         song.rack("drums", sampler("kit", {36: "samples/kick.wav", 38: "samples/snare.wav"}))
     """
+    if isinstance(sounds, list):
+        sounds_by_key = [(int(s["root"]), s) for s in sounds]
+    else:
+        sounds_by_key = sorted(sounds.items())
     specs = []
-    for key, sound in sorted(sounds.items()):
+    for key, sound in sounds_by_key:
         spec = {"file": sound} if isinstance(sound, str) else dict(sound)
         spec.setdefault("root", key)
         spec.setdefault("low", key)
@@ -70,6 +80,14 @@ def sampler(
         specs.append(spec)
     return Device(name=name, identifier="sampler", params={}, sounds=specs)
 
+
+# Sampled drums' gains in dB, set so each sits where its Surge stand-in did: the
+# mean of the peak and RMS differences measured on stems of the same bars. The
+# sampler follows velocity more than the Surge patches did, so one set of bars
+# cannot match everywhere; the fusion kit is matched on an A section, which is
+# most of Slow Orbit, and its solo comes out a few dB softer.
+FUSION_GAINS = {"kick": 4.0, "snare": 12.5, "hat": 15.0, "ride": 5.0}
+FUTURE_GAINS = {"kick": -2.0, "clap": 16.5, "roll": 9.0, "hat": 11.5}
 
 # Where each drum patch wants to be played.
 KICK_NOTE = 31
@@ -99,9 +117,22 @@ def _master(song: PieceBuilder, threshold: float, output: float) -> None:
     song.rack("master", glue)
 
 
-def fusion_rack(song: PieceBuilder) -> None:
-    """The fusion band: Rhodes, bass, synth lead, pad, and a kit."""
-    _master(song, threshold=0.3, output=0.18)
+def _drum(kit: str | None, file: str, key: int, synth: Device, gain_db: float = 0.0) -> Device:
+    """A sampled drum when a kit folder is given, else the Surge patch that stood in for it."""
+    if kit is None:
+        return synth
+    return sampler("kit", {key: f"{kit}/{file}"}, gain_db=gain_db)
+
+
+def fusion_rack(song: PieceBuilder, kit: str | None = None) -> None:
+    """
+    The fusion band: Rhodes, bass, synth lead, pad, and a kit.
+
+    Args:
+        kit: A folder of drum samples, relative to the song, such as "samples/jazz"
+            from `scripts/get_drum_samples.py`. Without one the drums are Surge.
+    """
+    _master(song, threshold=0.3, output=0.15)
     _reverb_bus(song, room=0.45, wet=0.5)
     # Surge's own factory patches, loaded whole. The parameter-built versions
     # (`electric_piano()`, `warm_pad()`) are still here for comparison.
@@ -121,10 +152,31 @@ def fusion_rack(song: PieceBuilder) -> None:
     )
     song.rack("bass", surge("synth", electric_bass()), volume=0.68)
     song.rack("lead", surge("synth", mono_lead()), volume=0.62, pan=0.05, sends={"verb": 0.25})
-    song.rack("kick", surge("synth", kick()), volume=0.66)
-    song.rack("snare", surge("synth", snare()), volume=0.56, sends={"verb": 0.12})
-    song.rack("hat", surge("synth", hat()), volume=0.5, pan=0.18)
-    song.rack("ride", surge("synth", ride()), volume=0.46, pan=-0.2)
+    # Sample gains put each sampled drum where the Surge one sat, measured on the
+    # solo's stems; the faders are unchanged.
+    song.rack(
+        "kick",
+        _drum(kit, "kick.wav", KICK_NOTE, surge("synth", kick()), FUSION_GAINS["kick"]),
+        volume=0.66,
+    )
+    song.rack(
+        "snare",
+        _drum(kit, "snare.wav", SNARE_NOTE, surge("synth", snare()), FUSION_GAINS["snare"]),
+        volume=0.56,
+        sends={"verb": 0.12},
+    )
+    song.rack(
+        "hat",
+        _drum(kit, "hihat-closed.wav", HAT_NOTE, surge("synth", hat()), FUSION_GAINS["hat"]),
+        volume=0.5,
+        pan=0.18,
+    )
+    song.rack(
+        "ride",
+        _drum(kit, "ride.wav", RIDE_NOTE, surge("synth", ride()), FUSION_GAINS["ride"]),
+        volume=0.46,
+        pan=-0.2,
+    )
 
 
 def fusion_drums(
@@ -142,8 +194,14 @@ def fusion_drums(
     ).velocity(82)
 
 
-def future_bass_rack(song: PieceBuilder) -> None:
-    """Saws, a sub, plucks, a vowel lead, and a kit."""
+def future_bass_rack(song: PieceBuilder, kit: str | None = None) -> None:
+    """
+    Saws, a sub, plucks, a vowel lead, and a kit.
+
+    Args:
+        kit: A folder of drum samples, relative to the song, such as "samples/future"
+            from `scripts/get_drum_samples.py`. Without one the drums are Surge.
+    """
     _master(song, threshold=0.25, output=0.08)
     _reverb_bus(song, room=0.7, wet=0.6)
     song.rack("chords", surge("synth", supersaw()), volume=0.74, sends={"verb": 0.25})
@@ -160,9 +218,26 @@ def future_bass_rack(song: PieceBuilder) -> None:
     song.rack("sub", surge("synth", sub_bass()), volume=0.74)
     song.rack("lead", surge("synth", mono_lead()), volume=0.6, sends={"verb": 0.4})
     song.rack("chop", surge("synth", chop()), volume=0.6, pan=0.1, sends={"verb": 0.4})
-    song.rack("kick", surge("synth", kick()), volume=0.7)
-    song.rack("clap", surge("synth", clap()), volume=0.6, sends={"verb": 0.25})
-    song.rack("roll", surge("synth", snare()), volume=0.52, sends={"verb": 0.3})
-    song.rack("hat", surge("synth", hat()), volume=0.48, pan=0.15)
+    song.rack(
+        "kick", _drum(kit, "kick.wav", 31, surge("synth", kick()), FUTURE_GAINS["kick"]), volume=0.7
+    )
+    song.rack(
+        "clap",
+        _drum(kit, "clap.wav", 55, surge("synth", clap()), FUTURE_GAINS["clap"]),
+        volume=0.6,
+        sends={"verb": 0.25},
+    )
+    song.rack(
+        "roll",
+        _drum(kit, "snare.wav", 55, surge("synth", snare()), FUTURE_GAINS["roll"]),
+        volume=0.52,
+        sends={"verb": 0.3},
+    )
+    song.rack(
+        "hat",
+        _drum(kit, "hihat-closed.wav", 60, surge("synth", hat()), FUTURE_GAINS["hat"]),
+        volume=0.48,
+        pan=0.15,
+    )
     song.rack("riser", surge("synth", riser()), volume=0.5, sends={"verb": 0.5})
     song.rack("impact", surge("synth", impact()), volume=0.55, sends={"verb": 0.6})

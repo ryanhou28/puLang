@@ -10,7 +10,11 @@ Each edit names its target the way locations do, by musical position:
 
     level   target                       field
     intent  "verse/harmony@3+0"          chord      the chord starting at bar 3, beat 0
+    intent  "verse/harmony"              chart      the whole progression, as a chord chart
+    intent  "verse"                      tempo      the section's bpm, or None for the piece's
     intent  "verse/keys"                 voicing | octave | velocity | muted | pattern
+    intent  "verse/lead"                 melody     the phrase: which motifs, developed how
+    intent  "motif/hook"                 notes      a motif, changed everywhere it is used
     score   "verse#2/harmony@3+0"        chord      the same chord, in the 2nd verse only
     score   "verse#2/keys/c4"            pitches    one chord's exact notes, for one part
 
@@ -31,15 +35,23 @@ from xdsl.dialects.builtin import IntegerAttr, ModuleOp, StringAttr, i64
 from xdsl.passes import ModulePass
 
 from pypulang.compiler.dialects import intent, score
-from pypulang.compiler.dialects.mus import ChordAttr, format_rational, from_attr, to_attr
+from pypulang.compiler.dialects.mus import (
+    ChordAttr,
+    RationalAttr,
+    float_attr,
+    format_rational,
+    from_attr,
+    to_attr,
+)
 from pypulang.compiler.locs import loc_key
 from pypulang.compiler.passes.lower_intent import _chord_spans
-from pypulang.harmony import chord_symbol, parse_chord_symbol
+from pypulang.harmony import chart_changes, chart_text, chord_symbol, parse_chord_symbol
 from pypulang.ir.intent import Key, TimeSignature
+from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.resolution import resolve_chord
 
 LEVELS = ("intent", "score")
-TRACK_FIELDS = ("voicing", "octave", "velocity", "muted", "pattern")
+TRACK_FIELDS = ("voicing", "octave", "velocity", "muted", "pattern", "melody")
 
 
 @dataclass
@@ -97,6 +109,28 @@ def _parse_target(target: str) -> tuple[str, int | None, str]:
     return name, int(occurrence) if hash_ else None, rest
 
 
+def section_chart(section: intent.SectionOp, piece: intent.PieceOp) -> str:
+    """A section's harmony as a chord chart, as `chart` edits carry it."""
+    harmony = section.harmony()
+    if harmony is None:
+        return ""
+    meter = section.meter.data if section.meter is not None else piece.meter.data
+    changes = harmony.changes()
+    if harmony.unit.data != "bars":
+        changes = [(c, d / meter.beats_per_bar) for c, d in changes]
+    return chart_text(changes, _section_key(piece, section))
+
+
+def _set_chart(section: intent.SectionOp, piece: intent.PieceOp, chart: str) -> None:
+    harmony = section.harmony()
+    if harmony is None:
+        raise ValueError("this section has no harmony to change")
+    changes = chart_changes(chart, _section_key(piece, section), section.bars.value.data)
+    harmony.properties["chords"] = type(harmony.chords)([ChordAttr(c) for c, _ in changes])
+    harmony.properties["durations"] = type(harmony.durations)([RationalAttr(d) for _, d in changes])
+    harmony.properties["unit"] = StringAttr("bars")
+
+
 def chord_starts(section: intent.SectionOp, piece_meter: TimeSignature) -> dict[str, int]:
     """Each chord's position in a section, mapped to its index in the harmony."""
     harmony = section.harmony()
@@ -123,6 +157,9 @@ def track_value(track: intent.TrackOp, name: str) -> Any:
         if pattern is None:
             return None
         return {"kind": pattern.kind.data, "params": from_attr(pattern.params)}
+    if name == "melody":
+        melody = next((o for o in track.body.block.ops if isinstance(o, intent.MelodyOp)), None)
+        return melody.phrase.data if melody is not None else None
     raise ValueError(f"No track setting {name!r}; settings are {', '.join(TRACK_FIELDS)}")
 
 
@@ -142,6 +179,12 @@ def _set_track(track: intent.TrackOp, name: str, value: Any) -> None:
             raise ValueError("this track plays written notes, not a pattern")
         pattern.properties["kind"] = StringAttr(value["kind"])
         pattern.properties["params"] = to_attr(value.get("params", {}))
+    elif name == "melody":
+        melody = next((o for o in track.body.block.ops if isinstance(o, intent.MelodyOp)), None)
+        if melody is None:
+            raise ValueError("this track plays no melody")
+        parse_phrase(str(value))
+        melody.properties["phrase"] = StringAttr(str(value))
 
 
 def _piece(module: ModuleOp) -> intent.PieceOp:
@@ -150,6 +193,13 @@ def _piece(module: ModuleOp) -> intent.PieceOp:
 
 def _intent_section(piece: intent.PieceOp, name: str) -> intent.SectionOp | None:
     return next((s for s in piece.sections() if s.section.data == name), None)
+
+
+def _motif_op(piece: intent.PieceOp, name: str) -> intent.MotifOp | None:
+    return next(
+        (o for o in piece.body.block.ops if isinstance(o, intent.MotifOp) and o.motif.data == name),
+        None,
+    )
 
 
 def _section_key(piece: intent.PieceOp, section: intent.SectionOp) -> Key:
@@ -164,6 +214,11 @@ def current_value(module: ModuleOp, edit: Edit) -> tuple[bool, Any]:
         Whether the target exists, and its value
     """
     piece = _piece(module)
+    if edit.target.startswith("motif/"):
+        motif = _motif_op(piece, edit.target.removeprefix("motif/"))
+        if motif is None or edit.field != "notes":
+            return False, None
+        return True, motif.notes.data
     name, _, rest = _parse_target(edit.target)
     section = _intent_section(piece, name)
     if section is None:
@@ -174,6 +229,14 @@ def current_value(module: ModuleOp, edit: Edit) -> tuple[bool, Any]:
             return False, None
         chord = section.harmony().changes()[index][0]
         return True, chord_symbol(chord, _section_key(piece, section))
+    if rest == "harmony":
+        return edit.field == "chart" and section.harmony() is not None, section_chart(
+            section, piece
+        )
+    if rest == "":
+        if edit.field != "tempo":
+            return False, None
+        return True, float(section.tempo.value.data) if section.tempo is not None else None
     track = next((t for t in section.tracks() if t.track.data == rest), None)
     if track is None:
         return False, None
@@ -201,6 +264,12 @@ class ApplyIntentEdits(ModulePass):
                 self.report.stale.append(
                     f"{edit.key}: edited when the source gave {edit.base!r}, source now gives {now!r}"
                 )
+            if edit.target.startswith("motif/"):
+                motif = _motif_op(piece, edit.target.removeprefix("motif/"))
+                parse_motif(str(edit.value))
+                motif.properties["notes"] = StringAttr(str(edit.value))
+                self.report.applied.append(edit.key)
+                continue
             name, _, rest = _parse_target(edit.target)
             section = _intent_section(piece, name)
             if rest.startswith("harmony@"):
@@ -211,6 +280,15 @@ class ApplyIntentEdits(ModulePass):
                     parse_chord_symbol(str(edit.value), _section_key(piece, section))
                 )
                 harmony.properties["chords"] = type(harmony.chords)(chords)
+            elif rest == "harmony":
+                _set_chart(section, piece, str(edit.value))
+            elif rest == "":
+                if edit.value in (None, ""):
+                    section.properties.pop("tempo", None)
+                else:
+                    if not 20 <= float(edit.value) <= 400:
+                        raise ValueError(f"A tempo of {edit.value} bpm is outside 20 to 400")
+                    section.properties["tempo"] = float_attr(float(edit.value))
             else:
                 track = next(t for t in section.tracks() if t.track.data == rest)
                 _set_track(track, edit.field, edit.value)

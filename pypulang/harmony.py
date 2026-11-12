@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from fractions import Fraction
+from math import lcm
 
 from pypulang.ir.intent import Chord, Key
 from pypulang.scales import get_scale_pitches, pitch_class_to_semitone
@@ -414,6 +416,69 @@ def parse_chart(chart: str, key: Key) -> list[tuple[Chord, tuple[int, int]]]:
             result.append((chord, (1, len(chords))))
         previous = chords
     return result
+
+
+def chart_changes(chart: str, key: Key, bars: int) -> list[tuple[Chord, Fraction]]:
+    """
+    A chart as (chord, bars) pairs filling a section, looping a short chart.
+
+    A four-bar vamp in a sixteen-bar section plays four times, and a chart longer
+    than the section stops at its end.
+    """
+    parsed = parse_chart(chart, key)
+    in_chart = sum((Fraction(*fraction) for _, fraction in parsed), Fraction(0))
+    changes: list[tuple[Chord, Fraction]] = []
+    filled = Fraction(0)
+    while filled < bars and in_chart > 0:
+        for chord, fraction in parsed:
+            if filled >= bars:
+                break
+            duration = min(Fraction(*fraction), bars - filled)
+            changes.append((chord, duration))
+            filled += duration
+    return changes
+
+
+def chart_text(changes: list[tuple[Chord, Fraction]], key: Key) -> str:
+    """
+    Write (chord, bars) pairs as a chart, the inverse of `chart_changes`.
+
+    A chord held into the next bar is written "%" there. A bar split unevenly, say
+    three beats and one, repeats the longer chord so the shares come out right.
+    """
+    bars: list[list[tuple[Chord, Fraction]]] = []
+    current: list[tuple[Chord, Fraction]] = []
+    held: list[bool] = []
+    filled = Fraction(0)
+    continuing = False
+    for chord, duration in changes:
+        remaining = duration
+        while remaining > 0:
+            take = min(1 - filled, remaining)
+            current.append((chord, take))
+            filled += take
+            remaining -= take
+            if filled == 1:
+                held.append(continuing and len(current) == 1)
+                bars.append(current)
+                current, filled = [], Fraction(0)
+                continuing = remaining > 0
+            else:
+                continuing = False
+    if current:
+        held.append(False)
+        bars.append(current)
+    written = []
+    for bar, is_held in zip(bars, held, strict=True):
+        if is_held:
+            written.append("%")
+            continue
+        unit = Fraction(1, lcm(*(share.denominator for _, share in bar)))
+        symbols = []
+        for chord, share in bar:
+            symbols.extend([chord_symbol(chord, key)] * int(share / unit))
+        written.append(" ".join(symbols))
+    return " | ".join(written)
 
 
 def root_pitch_class(chord: Chord, key: Key) -> int:

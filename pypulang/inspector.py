@@ -25,6 +25,7 @@ from pypulang.compiler.pipeline import CompileResult
 from pypulang.compiler.spelling import spell
 from pypulang.harmony import chord_symbol
 from pypulang.ir.intent import Key
+from pypulang.motifs import parse_phrase
 
 _LOC_RE = re.compile(r"^([^#/]+)#(\d+)/([^/]+)/(\d+)\+([^/]+)/(\w+)$")
 
@@ -57,7 +58,8 @@ class TrackInfo:
     target: str  # "verse/keys"
     role: str
     settings: dict[str, Any]
-    plays: str  # "pattern" or "notes"
+    plays: str  # "pattern", "melody" or "notes"
+    motifs: dict[str, str] = field(default_factory=dict)  # those its melody uses
 
 
 @dataclass
@@ -184,12 +186,21 @@ class Model:
         if op is None:
             return None
         pattern = track_value(op, "pattern")
+        melody = track_value(op, "melody")
         settings = {f: track_value(op, f) for f in ("voicing", "octave", "velocity", "muted")}
+        plays = "notes"
+        motifs: dict[str, str] = {}
         if pattern is not None:
             settings["pattern"] = pattern
-        return TrackInfo(
-            f"{name}/{track}", op.role.data, settings, "pattern" if pattern else "notes"
-        )
+            plays = "pattern"
+        if melody is not None:
+            settings["melody"] = melody
+            plays = "melody"
+            defined = self.intent.motifs()
+            for placement in parse_phrase(melody):
+                if placement.motif in defined:
+                    motifs[placement.motif] = defined[placement.motif]
+        return TrackInfo(f"{name}/{track}", op.role.data, settings, plays, motifs)
 
     def slots(self, tag: str, track: str) -> list[SlotInfo]:
         part = next((p for p in self.voiced.parts() if p.part.data == track), None)

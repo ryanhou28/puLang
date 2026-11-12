@@ -27,11 +27,13 @@ from pypulang.compiler.edits import Edit, current_value
 from pypulang.compiler.passes.voice_lead import parse_spec
 from pypulang.compiler.spelling import midi_of, spell
 from pypulang.context_patterns import CONTEXT_PATTERNS
-from pypulang.harmony import parse_chord_symbol
+from pypulang.harmony import parse_chart, parse_chord_symbol
 from pypulang.inspector import ClipView, Model, NoteChain
 from pypulang.ir.intent import Key
+from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.patterns import PATTERN_REGISTRY
 from pypulang.songfile import load_song
+from pypulang.variations import SOURCE, sites
 
 DEFAULT_LISTEN = 8950
 
@@ -91,6 +93,13 @@ class Companion:
             self.state.save_overrides(overrides)
             return note + self.push()
 
+    def pick(self, site: str, name: str) -> str:
+        with self.guard:
+            overrides = self.state.load_overrides()
+            overrides.pick(site, name)
+            self.state.save_overrides(overrides)
+            return f"{site}: {name}" + self.push()
+
     def drop(self, key: str) -> str:
         with self.guard:
             overrides = self.state.load_overrides()
@@ -149,6 +158,17 @@ class Companion:
             return int(text)
         if edit.field == "muted":
             return text.lower() in ("1", "on", "true", "yes")
+        if edit.field == "melody":
+            parse_phrase(text)
+            return text
+        if edit.field == "tempo":
+            return float(text) if text else None
+        if edit.field == "chart":
+            parse_chart(text, Key("C", "major"))  # the symbols must read; the key comes later
+            return text
+        if edit.field == "notes":
+            parse_motif(text)
+            return text
         if edit.field == "pattern":
             kind, _, params = text.partition(" ")
             if kind not in PATTERN_REGISTRY and kind not in CONTEXT_PATTERNS:
@@ -209,6 +229,7 @@ class Companion:
         else:
             body.extend(_clip_html(view, model, back))
             body.extend(_lift_html(view, model, self.suggestions.get(view.key), back))
+        body.extend(_variations_html(model, back))
         body.extend(_edits_html(model, back))
         return _PAGE.replace("{body}", "\n".join(body))
 
@@ -317,6 +338,11 @@ def _clip_html(view: ClipView, model: Model, back: str) -> list[str]:
                     " " + json.dumps(value["params"]) if value["params"] else ""
                 )
                 hint = "a pattern name, optionally followed by its parameters as JSON"
+            elif name == "melody":
+                text, hint = (
+                    value,
+                    "motifs and how each is developed, such as: hook; hook +1; hook end 1",
+                )
             else:
                 text, hint = (
                     value,
@@ -332,6 +358,17 @@ def _clip_html(view: ClipView, model: Model, back: str) -> list[str]:
                 f'<td class="dim">{_e(hint)}</td></tr>'
             )
         out.append("</table>")
+        if track.motifs:
+            out.append(
+                '<h2>Its motifs <span class="lvl">intent · everywhere each is used</span></h2>'
+                "<table>"
+            )
+            for motif, notes in track.motifs.items():
+                out.append(
+                    f"<tr><td>{_e(motif)}</td><td>{_form('intent', f'motif/{motif}', 'notes', notes, back, 28)}</td>"
+                    '<td class="dim">scale degrees and note values, such as 5/8 6 1\'/4 7/8</td></tr>'
+                )
+            out.append("</table>")
     return out
 
 
@@ -368,6 +405,38 @@ def _lift_html(
             f'<input type="hidden" name="back" value="{_e(back)}">'
             f"<button>keep this</button></form></td></tr>"
         )
+    out.append("</table>")
+    return out
+
+
+def _variations_html(model: Model, back: str) -> list[str]:
+    found = sites(model.overrides)
+    if not found:
+        return []
+    out = [
+        "<h2>Variations</h2>",
+        '<p class="dim">Alternatives proposed for a place in the song, by you or an agent. '
+        "Picking one applies its edits; the source is always an option.</p><table>",
+    ]
+    for site, alternatives in found.items():
+        picked = model.overrides.choices.get(site, SOURCE)
+        for name, description in [(SOURCE, "as written")] + [
+            (v.name, v.description) for v in alternatives
+        ]:
+            mark = "●" if name == picked else ""
+            button = (
+                ""
+                if name == picked
+                else f'<form method="post" action="/pick" class="inline">'
+                f'<input type="hidden" name="site" value="{_e(site)}">'
+                f'<input type="hidden" name="name" value="{_e(name)}">'
+                f'<input type="hidden" name="back" value="{_e(back)}">'
+                f"<button>pick</button></form>"
+            )
+            out.append(
+                f"<tr><td>{_e(site)}</td><td>{mark} {_e(name)}</td>"
+                f'<td class="dim">{_e(description)}</td><td>{button}</td></tr>'
+            )
     out.append("</table>")
     return out
 
@@ -472,6 +541,8 @@ class _Handler(BaseHTTPRequestHandler):
                 )
             elif self.path == "/drop":
                 companion.message = companion.drop(form["key"])
+            elif self.path == "/pick":
+                companion.message = companion.pick(form["site"], form["name"])
             elif self.path == "/lift/find":
                 companion.message = companion.read_edits(form["clip"])
             elif self.path == "/lift/accept":

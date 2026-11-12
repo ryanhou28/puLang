@@ -740,8 +740,9 @@ def _plan_parameters(
 
 
 def _sound_specs(device: daw.PluginOp, assets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
+    specs = []
+    for s in device.sound_list():
+        spec = {
             "assetId": assets[str(s["file"])]["id"],
             "rootNote": int(s["root"]),
             "lowNote": int(s["low"]),
@@ -750,8 +751,15 @@ def _sound_specs(device: daw.PluginOp, assets: dict[str, dict[str, Any]]) -> lis
             "pan": float(s["pan"]),
             "openEnded": bool(s["one_shot"]),
         }
-        for s in device.sound_list()
-    ]
+        # Sent only when used, so a song without them pushes to a kaiDAW that
+        # predates velocity layers and releases.
+        if (int(s.get("low_velocity", 1)), int(s.get("high_velocity", 127))) != (1, 127):
+            spec["lowVelocity"] = int(s["low_velocity"])
+            spec["highVelocity"] = int(s["high_velocity"])
+        if float(s.get("release", 0)):
+            spec["releaseMs"] = float(s["release"])
+        specs.append(spec)
+    return specs
 
 
 def _plan_sounds(
