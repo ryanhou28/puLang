@@ -97,7 +97,7 @@ with piece(tempo=126, key="D minor", title="Glass Alley") as song:
     # --- How it sounds -------------------------------------------------------
     glue = device("glue", "compressor")
     glue.params.update(
-        {"Threshold": 0.3, "Ratio": 0.4, "Attack": 0.1, "Release": 0.3, "Output gain": 0.15}
+        {"Threshold": 0.3, "Ratio": 0.4, "Attack": 0.1, "Release": 0.3, "Output gain": 0.12}
     )
     song.rack("master", glue)
     verb = device("reverb", "reverb")

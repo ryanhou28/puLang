@@ -9,7 +9,8 @@ library folder, and writes `<out>/<instrument>/<root>.wav`.
 
     python scripts/get_instrument_samples.py [--only piano,strings] [--out DIR]
 
-About 400 MB is downloaded for all ten instruments, and 120 MB written. Needs numpy
+About 700 MB is downloaded for all ten instruments and their layers, and 260 MB
+written. Needs numpy
 and soundfile.
 """
 
@@ -133,30 +134,56 @@ def loudness(audio: np.ndarray, rate: int) -> float:
 
 
 def build(name: str, spec: Instrument, trees: dict[str, list[dict]], out: Path) -> str:
+    """
+    Every layer of an instrument: the main one in `<out>/<name>`, others below it.
+
+    Each folder of samples is levelled to one loudness, so a layer differs from
+    another in tone and velocity sets the level. The main layer's loudest peak
+    goes to -1 dBFS, as it did before instruments had layers, so songs balanced
+    then keep their balance; the other layers take the same gain, less if it
+    would clip them, so a softly played layer can end up a little quieter.
+    """
+    layers = {out / name: read_layer(spec.sources, spec.seconds, trees)}
+    for layer in spec.layers:
+        layers[out / name / layer.name] = read_layer(layer.sources, spec.seconds, trees)
+
+    def headroom(samples: dict[int, tuple[np.ndarray, int]]) -> float:
+        return 10 ** (-1 / 20) / max(float(np.max(np.abs(a))) for a, _ in samples.values())
+
+    gain = headroom(layers[out / name])
+    for folder, samples in layers.items():
+        folder.mkdir(parents=True, exist_ok=True)
+        level = min(gain, headroom(samples))
+        for root, (audio, rate) in samples.items():
+            sf.write(folder / f"{root}.wav", audio * level, rate, subtype="PCM_16")
+    return f"{name}: " + ", ".join(
+        f"{folder.relative_to(out)} {len(samples)} samples" for folder, samples in layers.items()
+    )
+
+
+def read_layer(
+    sources: tuple[Source, ...], seconds: float, trees: dict[str, list[dict]]
+) -> dict[int, tuple[np.ndarray, int]]:
+    """One layer's samples by root, each folder brought to one median loudness."""
     samples: dict[int, tuple[np.ndarray, int]] = {}
-    for source in spec.sources:
+    for source in sources:
         paths = files_of(source, trees[source.repo])
         with ThreadPoolExecutor(6) as pool:
             fetched = pool.map(
                 read_start,
                 [source.repo] * len(paths),
                 paths.values(),
-                [spec.seconds + 0.5] * len(paths),
+                [seconds + 0.5] * len(paths),
             )
             read = dict(zip(paths, fetched, strict=True))
         # One gain per folder, bringing its median loudness to a common level, so
         # the strings' three sections join without a step and each folder keeps
         # its own rise and fall across the range.
-        cut = {root: (trimmed(a, r, spec.seconds), r) for root, (a, r) in read.items()}
+        cut = {root: (trimmed(a, r, seconds), r) for root, (a, r) in read.items()}
         median = float(np.median([loudness(a, r) for a, r in cut.values()]))
         for root, (audio, rate) in cut.items():
             samples[root] = (audio * (0.1 / median), rate)
-    peak = max(float(np.max(np.abs(a))) for a, _ in samples.values())
-    folder = out / name
-    folder.mkdir(parents=True, exist_ok=True)
-    for root, (audio, rate) in samples.items():
-        sf.write(folder / f"{root}.wav", audio * (10 ** (-1 / 20) / peak), rate, subtype="PCM_16")
-    return f"{name}: {len(samples)} samples, {min(samples)}-{max(samples)}"
+    return samples
 
 
 def main() -> None:

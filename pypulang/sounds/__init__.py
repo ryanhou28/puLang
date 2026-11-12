@@ -42,7 +42,10 @@ __all__ = [
 
 
 def sampler(
-    name: str, sounds: dict[int, str | dict], one_shot: bool = True, gain_db: float = 0.0
+    name: str,
+    sounds: dict[int, str | dict] | list[dict],
+    one_shot: bool = True,
+    gain_db: float = 0.0,
 ) -> Device:
     """
     kaiDAW's sampler, with audio files on keys.
@@ -50,16 +53,23 @@ def sampler(
     Args:
         name: Local name, as for any device
         sounds: Key to a file path (relative to the song), or to a dict with "file" and
-            any of "root", "low", "high", "gain", "pan", "one_shot". A bare path plays
-            on its key alone, which is what a drum pad is.
+            any of "root", "low", "high", "gain", "pan", "one_shot", "low_velocity",
+            "high_velocity" and "release" (milliseconds after the note ends). A bare
+            path plays on its key alone, which is what a drum pad is. Or a list of
+            such dicts, each with its "root", for several sounds on one key, as an
+            instrument recorded at several dynamics has.
         one_shot: Whether a sound plays to its end however short the note is
         gain_db: The default gain of every sound
 
     Example:
         song.rack("drums", sampler("kit", {36: "samples/kick.wav", 38: "samples/snare.wav"}))
     """
+    if isinstance(sounds, list):
+        sounds_by_key = [(int(s["root"]), s) for s in sounds]
+    else:
+        sounds_by_key = sorted(sounds.items())
     specs = []
-    for key, sound in sorted(sounds.items()):
+    for key, sound in sounds_by_key:
         spec = {"file": sound} if isinstance(sound, str) else dict(sound)
         spec.setdefault("root", key)
         spec.setdefault("low", key)

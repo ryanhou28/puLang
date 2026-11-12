@@ -455,10 +455,16 @@ zone per sample, each key playing the nearest one: `piano` (a Steinway B), `upri
 `examples/songs/samples/instruments/` from two CC0 libraries, the
 [Versilian Community Sample Library](https://github.com/sgossner/VCSL) and
 [VSCO 2 Community Edition](https://github.com/sgossner/VSCO-2-CE), downloading only the
-seconds each sample keeps. kaiDAW's sampler plays one sample per key and follows velocity
-with gain, so each instrument is one dynamic layer of its library, and a note held longer
-than its sample (six seconds for sustained sounds) runs out. The tables name the note each
-sample really sounds, checked with a pitch detector, since most of these libraries call
+seconds each sample keeps. Most instruments are recorded at more than one dynamic, and
+kaiDAW's sampler picks a sample by how hard a key is played as well as which key, so a soft
+piano note plays a softly played recording: the piano has three layers, the brass, strings
+and vibes a soft one under the main one, the tenor a loud one over it. Layers are levelled
+to the same loudness, so velocity sets the level and the layer the tone. Notes fade over
+the instrument's release when they end, a quarter of a second for the piano. A note held
+longer than its sample (six seconds for sustained sounds) runs out. A kaiDAW built before
+velocity layers takes `sampled(..., layers=False)`, the main layer alone; a song that uses
+neither layers nor releases sends neither, so it pushes to any kaiDAW. The tables name the
+note each sample really sounds, checked with a pitch detector, since most of these libraries call
 middle C "C3".
 
 ## Sound

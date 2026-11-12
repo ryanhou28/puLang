@@ -229,7 +229,10 @@ class PluginOp(IRDLOperation):
         super().__init__(properties=props)
 
     def sound_list(self) -> list[dict[str, object]]:
-        """A sampler's sounds: file, root, low, high, gain, pan, one_shot."""
+        """
+        A sampler's sounds: file, root, low, high, gain, pan, one_shot, and when
+        used low_velocity, high_velocity and release.
+        """
         return [from_attr(s) for s in self.sounds.data] if self.sounds is not None else []
 
 
