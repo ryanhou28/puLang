@@ -173,7 +173,7 @@ placement is a motif and its developments, applied left to right:
 | Development | What it does |
 |---|---|
 | `+2`, `-1` | Sequence: every note moved by scale steps |
-| `^`, `v` | An octave up or down |
+| `^`, `v` | An octave above or below where the statement would otherwise sit; the range does not undo it |
 | `inv` | Inversion around the first note |
 | `rev` | Retrograde, rhythm included |
 | `x2`, `x1/2` | Augmentation and diminution |
@@ -301,6 +301,17 @@ the hand edits it reproduces exactly and how many notes nobody touched it would 
 A chord the edited notes spell is offered together with the voicing as played, because a new
 chord on its own would be voiced afresh: the pair keeps the notes and tells the other parts
 what the harmony now is. Keeping a reading drops the note edits it explains.
+
+Hand edits to a melody written in motifs are read back the same way. Each sounding note is
+traced to its statement in the phrase and to the note of the motif as written it came from,
+through every development, so a dragged note can mean the motif itself changed, everywhere
+it is used, or that one statement moved: a step up (`hook +2`), an octave (`hook ^`), or a
+new last note (`hook end 6`), in every occurrence of the section. A pitch change is read in
+scale steps and undone through inversions; a move or a new length is undone through
+stretching, to the nearest sixteenth or triplet eighth. Each reading is checked by
+lowering like the others, and shown with how many notes nobody touched it would also
+change, which is how a motif rewrite, which reaches every chorus, ranks against a
+change to one phrase.
 
 ## Variations
 

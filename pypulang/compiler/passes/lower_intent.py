@@ -24,7 +24,7 @@ from pypulang.compiler.notes import NoteRecord, add_notes
 from pypulang.compiler.timeline import Timeline
 from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.ir.intent import Chord, Key, TimeSignature
-from pypulang.motifs import realize
+from pypulang.motifs import MelodyNote, Trace, realize_traced
 from pypulang.resolution import resolve_chord
 
 
@@ -147,6 +147,38 @@ def _literal_records(
     return records
 
 
+def realize_melody(
+    melody: intent.MelodyOp,
+    section: str,
+    track: str,
+    key: Key,
+    meter: TimeSignature,
+    length: Fraction,
+    motifs: dict[str, str],
+) -> list[tuple[MelodyNote, Trace]]:
+    """
+    A melody's notes in one section, in beats from its start, with where each came
+    from. Lowering and lifting both read melodies through this, so they agree.
+    """
+    harmony = melody.harmony.owner
+    assert isinstance(harmony, intent.HarmonyOp)
+    try:
+        return realize_traced(
+            melody.phrase.data,
+            motifs,
+            key,
+            _chord_spans(harmony, length, meter),
+            meter.beats_per_bar,
+            low=melody.low.value.data,
+            high=melody.high.value.data,
+            fit=bool(melody.fit.value.data),
+            # The same in every occurrence, as written notes are
+            seed=f"{section}/{track}",
+        )
+    except ValueError as error:
+        raise ValueError(f"{section}/{track}: {error}") from error
+
+
 def _melody_records(
     occurrence: _Occurrence,
     track: intent.TrackOp,
@@ -154,24 +186,16 @@ def _melody_records(
     motifs: dict[str, str],
 ) -> list[NoteRecord]:
     marker = occurrence.marker
-    meter: TimeSignature = marker.meter.data
-    harmony = melody.harmony.owner
-    assert isinstance(harmony, intent.HarmonyOp)
-    try:
-        notes = realize(
-            melody.phrase.data,
-            motifs,
-            marker.key.data,
-            _chord_spans(harmony, marker.length, meter),
-            meter.beats_per_bar,
-            low=melody.low.value.data,
-            high=melody.high.value.data,
-            fit=bool(melody.fit.value.data),
-            # The same in every occurrence, as written notes are
-            seed=f"{marker.section.data}/{track.track.data}",
-        )
-    except ValueError as error:
-        raise ValueError(f"{marker.section.data}/{track.track.data}: {error}") from error
+    traced = realize_melody(
+        melody,
+        marker.section.data,
+        track.track.data,
+        marker.key.data,
+        marker.meter.data,
+        marker.length,
+        motifs,
+    )
+    notes = [note for note, _ in traced]
     start = marker.start.data
     octave = track.octave.value.data
     base = track.velocity.value.data

@@ -18,7 +18,7 @@ A phrase is placements separated by ";", played one after another. A placement i
 a motif's name and any of these, applied left to right:
 
     +n / -n     move every note n scale steps (a sequence)
-    ^ / v       an octave up or down
+    ^ / v       an octave above or below where it would otherwise sit
     inv         invert: mirror its intervals around the first note
     rev         play it backwards
     x2, x1/2    stretch or squeeze its rhythm
@@ -65,6 +65,9 @@ class MotifNote:
     dur: Fraction
     velocity_scale: Fraction = Fraction(1)
     articulation: str | None = None
+    # Which note of the motif as written this one comes from, through every
+    # development; None for a note an ornament added.
+    origin: int | None = None
 
 
 @dataclass(frozen=True)
@@ -123,7 +126,9 @@ def parse_motif(text: str) -> Motif:
                 else Fraction(1)
             )
             articulation = "staccato" if "!" in suffix else None
-            notes.append(MotifNote(step, accidental, at, value, scale, articulation))
+            notes.append(
+                MotifNote(step, accidental, at, value, scale, articulation, origin=len(notes))
+            )
         tied = "~" in suffix
         at += value
     if not notes:
@@ -222,6 +227,7 @@ def _ornament(motif: Motif, seed: str) -> Motif:
                     start=note.start + half,
                     dur=half,
                     velocity_scale=note.velocity_scale * Fraction(4, 5),
+                    origin=None,
                 )
             )
         else:
@@ -348,6 +354,15 @@ def _place(motif: Motif, key: Key, anchor: int, low: int, high: int) -> list[int
     return [_pitch(n, key, octave) for n in motif.notes]
 
 
+@dataclass(frozen=True)
+class Trace:
+    """Where a realized note came from: its placement, its motif note, its pitch unfitted."""
+
+    placement: int  # index among the phrase's placements, rests included
+    note: MotifNote  # as developed
+    written: int  # the pitch before it was fitted to the chord
+
+
 def realize(
     phrase: str,
     motifs: dict[str, str],
@@ -375,12 +390,28 @@ def realize(
     Raises:
         ValueError: On a motif that is not defined, or text that cannot be read
     """
+    traced = realize_traced(phrase, motifs, key, spans, bar_beats, low, high, fit, seed)
+    return [note for note, _ in traced]
+
+
+def realize_traced(
+    phrase: str,
+    motifs: dict[str, str],
+    key: Key,
+    spans: list[tuple[Chord, Fraction, Fraction]],
+    bar_beats: Fraction,
+    low: int = 60,
+    high: int = 84,
+    fit: bool = True,
+    seed: str = "",
+) -> list[tuple[MelodyNote, Trace]]:
+    """`realize`, with where each note came from, which lifting a hand edit needs."""
     parsed = {name: parse_motif(text) for name, text in motifs.items()}
     scale_pcs = {(pitch_class_to_semitone(key.root) + s) % 12 for s in get_scale_pitches(key)}
     centre = (low + high) // 2
     previous: int | None = None
     at = Fraction(0)
-    result: list[MelodyNote] = []
+    result: list[tuple[MelodyNote, Trace]] = []
     for index, placement in enumerate(parse_phrase(phrase)):
         if placement.motif is None:
             at += placement.rest
@@ -388,7 +419,13 @@ def realize(
         if placement.motif not in parsed:
             raise ValueError(f"No motif called {placement.motif!r}; define it with song.motif()")
         motif = parsed[placement.motif]
+        # Octave marks are applied after placing: "^" is an octave above wherever the
+        # statement would otherwise sit, which the range must not undo.
+        octaves = 0
         for op, arg in placement.ops:
+            if op in ("^", "v"):
+                octaves += 1 if op == "^" else -1
+                continue
             motif = develop(motif, op, arg, seed_text=f"{seed}/{index}")
         if previous is None:
             # The first placement sits in the octave whose tonic is nearest the middle
@@ -398,9 +435,12 @@ def realize(
             anchor = _pitch(motif.notes[0], key, home)
         else:
             anchor = previous
-        pitches = _place(motif, key, anchor, low, high)
+        pitches = [p + 12 * octaves for p in _place(motif, key, anchor, low, high)]
+        if octaves:
+            motif = develop(motif, "+", str(7 * octaves))
         for note, pitch in zip(motif.notes, pitches, strict=True):
             start = at + note.start
+            written = pitch
             if fit:
                 sounding = _chord_at(spans, start)
                 if sounding is not None:
@@ -413,8 +453,147 @@ def realize(
                         pitch = _fit(pitch, tones, scale_pcs)
             if start >= 0:
                 result.append(
-                    MelodyNote(pitch, start, note.dur, note.velocity_scale, note.articulation)
+                    (
+                        MelodyNote(pitch, start, note.dur, note.velocity_scale, note.articulation),
+                        Trace(index, note, written),
+                    )
                 )
             previous = pitch
         at += motif.length
     return result
+
+
+# -- writing back -----------------------------------------------------------------
+
+
+def _values() -> dict[Fraction, str]:
+    table = {}
+    for number in (1, 2, 4, 8, 16, 32):
+        for dotted, triplet, mark in ((False, False, ""), (True, False, "."), (False, True, "t")):
+            table[_value(str(number), dotted, triplet)] = f"{number}{mark}"
+    return table
+
+
+_VALUES = _values()
+
+
+def _durations(beats: Fraction) -> list[str] | None:
+    """A length as note values, tied when no one value is it; None if none fit."""
+    if beats in _VALUES:
+        return [_VALUES[beats]]
+    pieces = []
+    for value in sorted(_VALUES, reverse=True):
+        while beats >= value and "t" not in _VALUES[value] and "." not in _VALUES[value]:
+            pieces.append(_VALUES[value])
+            beats -= value
+    return pieces if beats == 0 else None
+
+
+def format_motif(notes: list[MotifNote], length: Fraction) -> str | None:
+    """
+    Write motif notes as motif text, the inverse of `parse_motif`.
+
+    Returns None when the notes overlap or a length has no note values.
+    """
+    tokens: list[str] = []
+    current: str | None = None
+    at = Fraction(0)
+
+    def put(name: str, values: list[str], suffix: str = "", tie: bool = False) -> None:
+        nonlocal current
+        for index, value in enumerate(values):
+            token = name + ("" if value == current else f"/{value}")
+            current = value
+            last = index == len(values) - 1
+            tokens.append(token + (suffix if last else "") + ("~" if tie and not last else ""))
+
+    for note in sorted(notes, key=lambda n: n.start):
+        if note.start < at:
+            return None
+        if note.start > at:
+            gap = _durations(note.start - at)
+            if gap is None:
+                return None
+            put("r", gap)
+        values = _durations(note.dur)
+        if values is None or abs(note.accidental) > 1:
+            return None
+        octave = note.step // 7
+        name = (
+            {1: "#", -1: "b", 0: ""}[note.accidental]
+            + str(note.step % 7 + 1)
+            + ("'" * octave if octave > 0 else "," * -octave)
+        )
+        suffix = (">" if note.velocity_scale > 1 else "?" if note.velocity_scale < 1 else "") + (
+            "!" if note.articulation == "staccato" else ""
+        )
+        put(name, values, suffix, tie=True)
+        at = note.start + note.dur
+    if length > at:
+        tail = _durations(length - at)
+        if tail is None:
+            return None
+        put("r", tail)
+    return " ".join(tokens)
+
+
+def format_phrase(placements: list[Placement]) -> str:
+    """Write placements as phrase text, the inverse of `parse_phrase`."""
+    parts = []
+    for placement in placements:
+        if placement.motif is None:
+            values = _durations(placement.rest) or [str(placement.rest)]
+            parts.extend(f"rest {v}" for v in values)
+            continue
+        words = [placement.motif]
+        for op, arg in placement.ops:
+            if op in ("+", "-"):
+                words.append(f"{op}{arg}")
+            elif op in ("^", "v", "inv", "rev"):
+                words.append(op)
+            elif op == "x":
+                words.append(f"x{arg}")
+            else:
+                words.append(f"{op} {arg}")
+        parts.append(" ".join(words))
+    return "; ".join(parts)
+
+
+# Which side a note outside the key is read from, by mode: the raised fourth,
+# sixth and seventh of a minor key are sharps; in a major key only the raised
+# fourth is, and the rest are flats (b2, b3, b6, b7).
+_SHARP_BELOW = {"minor_like": {3, 5, 6}, "major_like": {3}}
+_MINOR_LIKE = {
+    "minor",
+    "aeolian",
+    "dorian",
+    "phrygian",
+    "locrian",
+    "harmonic_minor",
+    "melodic_minor",
+}
+
+
+def degree_of(pitch: int, key: Key) -> tuple[int, int]:
+    """
+    A pitch as (step, accidental) in a key, where step counts scale steps from
+    degree 1 of octave -1 (MIDI 0-11), so `_pitch(MotifNote(step, acc, ...), key, 0)`
+    gives the pitch back.
+    """
+    scale = get_scale_pitches(key)
+    root = pitch_class_to_semitone(key.root)
+    octave, within = divmod(pitch - 12 - root, 12)
+    for index, offset in enumerate(scale):
+        if offset == within:
+            return octave * 7 + index, 0
+    below = (
+        max(i for i, offset in enumerate(scale) if offset < within) if within > scale[0] else None
+    )
+    sharps = _SHARP_BELOW["minor_like" if key.mode in _MINOR_LIKE else "major_like"]
+    if below is not None and (below in sharps or below == 6):
+        return octave * 7 + below, within - scale[below]
+    above = (
+        next(i for i, offset in enumerate(scale) if offset > within) if within < scale[-1] else 7
+    )
+    upper = scale[above] if above < 7 else 12
+    return octave * 7 + above, within - upper

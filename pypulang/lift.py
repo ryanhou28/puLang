@@ -3,7 +3,8 @@ Lifting: reading hand edits made in the DAW as edits at a higher level.
 
 Moving three notes of a chord in the piano roll is recorded as three note edits.
 Often it means something higher: a different voicing of that chord, a different
-chord, the part an octave up. This module proposes such readings and checks each
+chord, the part an octave up, a motif rewritten, a phrase moved a step (see
+`pypulang.lift_melody`). This module proposes such readings and checks each
 the only way that is honest, by lowering it: the song is recompiled with the
 proposed edit, and the proposal counts the hand edits it reproduces exactly and the
 notes nobody touched that it would also change.
@@ -27,6 +28,7 @@ from pypulang.compiler.locs import loc_key
 from pypulang.harmony import chord_symbol, parse_chord_symbol, root_pitch_class
 from pypulang.inspector import Model, parse_loc
 from pypulang.ir.intent import Key
+from pypulang.lift_melody import melody_candidates
 from pypulang.resolution import resolve_chord
 from pypulang.songfile import Song
 
@@ -230,6 +232,7 @@ def candidates(model: Model, clip_key: str | None) -> list[Suggestion]:
                     f"{track} notes were deleted; mute it in every {section}",
                 )
             )
+    out.extend(melody_candidates(model, edits))
     return out
 
 
