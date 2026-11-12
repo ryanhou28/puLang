@@ -15,6 +15,8 @@ Protocol server.
     propose      keep a named bundle of edits as an alternative at a site
     variations   the sites, their alternatives, and which is picked
     pick         choose an alternative at a site, or the source
+    readings     what the hand edits in a clip might mean above the notes
+    keep_reading keep one of those readings
     review       what the compiler's read-through finds, and each line's shape
     render       bounce a window to a WAV through kaiDAW and measure it
     audition     render every alternative at a site over the bars it changes
@@ -425,6 +427,63 @@ def drop_variation(song: str, name: str) -> dict[str, Any]:
     return {"dropped": name}
 
 
+def _readings(loaded: Song, state: SongState, clip: str) -> list[Any]:
+    from pypulang import lift
+    from pypulang.inspector import Model
+
+    model = Model(loaded.compile(keep_trace=True), state.load_lock(), state.load_overrides())
+    return lift.suggest(loaded, model, clip)
+
+
+def readings(
+    song: str, clip: str, port: int = DEFAULT_PORT, pull_first: bool = True
+) -> dict[str, Any]:
+    """
+    What the hand edits in one clip, such as "chorus#1/trumpet", might mean above
+    the notes: a chord, a voicing, an octave, a motif rewritten, a phrase moved.
+    Each reading was checked by lowering; `explains` counts the hand edits it
+    reproduces and `disturbs` the notes nobody touched that it would also change.
+    """
+    loaded, state, _ = _song(song)
+    if pull_first:
+        from pypulang.backends.kaidaw import KaidawClient, pull
+
+        pull(KaidawClient(port=port), state)
+    found = _readings(loaded, state, clip)
+    edited = sum(1 for loc in state.load_overrides().notes if loc.startswith(clip + "/"))
+    return plain(
+        {
+            "clip": clip,
+            "hand_edits": edited,
+            "readings": [
+                {
+                    "index": index,
+                    "reason": s.reason,
+                    "edits": [e.to_json() for e in s.edits],
+                    "explains": len(s.explains),
+                    "disturbs": s.disturbs,
+                }
+                for index, s in enumerate(found)
+            ],
+        }
+    )
+
+
+def keep_reading(song: str, clip: str, index: int) -> dict[str, Any]:
+    """Keep reading `index` of a clip's hand edits: its edits stay, the note edits it explains go."""
+    from pypulang import lift
+
+    loaded, state, _ = _song(song)
+    found = _readings(loaded, state, clip)
+    if not 0 <= index < len(found):
+        raise ToolError(f"{clip} has {len(found)} reading(s)")
+    chosen = found[index]
+    state.save_overrides(lift.accept(loaded, state.load_overrides(), chosen))
+    return plain(
+        {"kept": [e.to_json() for e in chosen.edits], "dropped_note_edits": len(chosen.explains)}
+    )
+
+
 # -- hearing, by measurement --------------------------------------------------------------
 
 
@@ -587,6 +646,8 @@ TOOLS: dict[str, Any] = {
     "propose": propose,
     "pick": pick,
     "drop_variation": drop_variation,
+    "readings": readings,
+    "keep_reading": keep_reading,
     "render": render,
     "audition": audition,
 }

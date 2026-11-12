@@ -352,6 +352,7 @@ returns plain data:
 | `review` | The compiler's read-through, and each melody's range and density per section |
 | `edit`, `drop` | Change one thing above the notes and keep it, or forget it |
 | `propose`, `pick`, `drop_variation`, `variations` | Variations, as above |
+| `readings`, `keep_reading` | Pull the hand edits in a clip from kaiDAW and read them above the notes, as the companion page does; keep one |
 | `render` | Push to kaiDAW and bounce a section occurrence, some bars, or the song, with its levels |
 | `audition` | Render every alternative at a site |
 

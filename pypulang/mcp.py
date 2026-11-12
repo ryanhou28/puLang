@@ -120,6 +120,26 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": _schema({"name": {"type": "string"}}, ["name"]),
     },
     {
+        "name": "readings",
+        "description": 'Pull the hand edits made in kaiDAW and read those in one clip (such as "chorus#1/trumpet") as edits above the notes: a chord, a voicing, an octave, a motif rewritten, a phrase moved. Each is checked by recompiling; explains counts the hand edits it reproduces, disturbs the untouched notes it would also change.',
+        "inputSchema": _schema(
+            {
+                "clip": {"type": "string"},
+                "port": {"type": "integer"},
+                "pull_first": {"type": "boolean", "default": True},
+            },
+            ["clip"],
+        ),
+    },
+    {
+        "name": "keep_reading",
+        "description": "Keep one reading from `readings`: its edits are kept and the note edits it explains are dropped.",
+        "inputSchema": _schema(
+            {"clip": {"type": "string"}, "index": {"type": "integer", "minimum": 0}},
+            ["clip", "index"],
+        ),
+    },
+    {
         "name": "render",
         "description": 'Push the song to a running kaiDAW and bounce a window to a WAV: a section occurrence such as "chorus#2", or bars, or the whole song. Returns the file and its RMS and peak levels.',
         "inputSchema": _schema(

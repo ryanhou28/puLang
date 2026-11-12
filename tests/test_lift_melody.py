@@ -169,3 +169,23 @@ class TestRoundTrips:
             "rest 2; m +2 inv end 1; m first 6 x1/2",
         ):
             assert format_phrase(parse_phrase(text)) == text
+
+
+class TestAgent:
+    def test_an_agent_reads_and_keeps_a_reading(self, song_file, connected):
+        from pypulang import agent
+
+        client, state = connected
+        up = {62: 64, 64: 65, 65: 67, 69: 71}
+        hand_edit(
+            client, state, "a#1/lead", nth({4, 5, 6, 7}, lambda n: dict(n, pitch=up[n["pitch"]]))
+        )
+        found = agent.readings(str(song_file), "a#1/lead", pull_first=False)
+        assert found["hand_edits"] == 4
+        best = found["readings"][0]
+        assert best["edits"][0]["value"] == "m; m +2" and best["explains"] == 4
+        kept = agent.keep_reading(str(song_file), "a#1/lead", best["index"])
+        assert kept["dropped_note_edits"] == 4
+        assert (
+            agent.describe(str(song_file))["sections"]["a"]["tracks"]["lead"]["melody"] == "m; m +2"
+        )
