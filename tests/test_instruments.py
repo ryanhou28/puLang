@@ -77,6 +77,11 @@ class TestLayers:
     def test_one_shots_keep_no_release(self):
         assert not any("release" in s for s in sampled("v", "vibes").sounds)
 
+    def test_a_release_can_be_given_per_rack(self):
+        damped = sampled("v", "vibes", one_shot=False, release_ms=500)
+        assert all(s["release"] == 500 and not s["one_shot"] for s in damped.sounds)
+        assert all(s["release"] == 40 for s in sampled("p", "piano", release_ms=40).sounds)
+
 
 class TestToKaidaw:
     def test_velocities_and_release_reach_the_sampler(self, tmp_path):

@@ -107,7 +107,15 @@ with piece(tempo=78, key="F minor", title="Lantern Rain") as song:
     )
     song.rack("bass", sampled("bass", "upright_bass", gain_db=-4), volume=0.72)
     song.rack("strings", sampled("str", "strings"), volume=0.5, sends={"verb": 0.5})
-    song.rack("vibes", sampled("vib", "vibes"), volume=0.5, pan=0.3, sends={"verb": 0.45})
+    # Vibes played with the damper, each note let go over half a second, and less
+    # reverb: left to ring under the intro's chords they blurred into the band.
+    song.rack(
+        "vibes",
+        sampled("vib", "vibes", one_shot=False, release_ms=500),
+        volume=0.5,
+        pan=0.3,
+        sends={"verb": 0.25},
+    )
     for name, file, key, gain_db, volume in [
         ("ride", "ride.wav", RIDE, FUSION_GAINS["ride"] + 6, 0.5),
         ("pedal", "hihat-pedal.wav", PEDAL, FUSION_GAINS["hat"] - 2, 0.45),

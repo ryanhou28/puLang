@@ -306,6 +306,7 @@ def sampled(
     gain_db: float = 0.0,
     one_shot: bool | None = None,
     layers: bool = True,
+    release_ms: float | None = None,
 ) -> Device:
     """
     A sampled acoustic instrument on kaiDAW's sampler.
@@ -320,6 +321,8 @@ def sampled(
         one_shot: Override whether notes ring past their end
         layers: Use every dynamic the instrument has; False for the main one alone,
             playing at every velocity, for a kaiDAW without velocity layers
+        release_ms: Override how long notes fade after they end, such as vibes
+            played with the damper rather than left to ring (with one_shot=False)
 
     Example:
         song.rack("piano", sampled("piano", "piano"), sends={"verb": 0.2})
@@ -345,7 +348,8 @@ def sampled(
             }
             if (low_velocity, high_velocity) != (1, 127):
                 sound["low_velocity"], sound["high_velocity"] = low_velocity, high_velocity
-            if spec.release_ms:
-                sound["release"] = spec.release_ms
+            release = spec.release_ms if release_ms is None else release_ms
+            if release:
+                sound["release"] = release
             sounds.append(sound)
     return sampler(name, sounds, gain_db=gain_db)

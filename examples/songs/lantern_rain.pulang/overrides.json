@@ -11,13 +11,6 @@
    "value": "r/2 #7,/8 2/8 4/8 6/8"
   },
   {
-   "base": 64,
-   "field": "velocity",
-   "level": "intent",
-   "target": "intro/vibes",
-   "value": 96
-  },
-  {
    "base": 46,
    "field": "velocity",
    "level": "intent",
@@ -51,6 +44,53 @@
    "level": "intent",
    "target": "intro/strings",
    "value": 40
+  },
+  {
+   "base": 64,
+   "field": "velocity",
+   "level": "intent",
+   "target": "intro/vibes",
+   "value": 112
+  },
+  {
+   "base": {
+    "kind": "hits",
+    "params": {
+     "cell": "x...x...x...x...",
+     "gate": "9/10"
+    }
+   },
+   "field": "pattern",
+   "level": "intent",
+   "target": "intro/piano",
+   "value": {
+    "kind": "hits",
+    "params": {
+     "cell": "x.......x.......",
+     "gate": "9/10"
+    }
+   }
+  },
+  {
+   "base": "rootless(53,74)",
+   "field": "voicing",
+   "level": "intent",
+   "target": "intro/piano",
+   "value": "rootless(46,64)"
+  },
+  {
+   "base": 100,
+   "field": "velocity",
+   "level": "intent",
+   "target": "verse/trumpet",
+   "value": 80
+  },
+  {
+   "base": 100,
+   "field": "velocity",
+   "level": "intent",
+   "target": "verse2/trumpet",
+   "value": 78
   }
  ],
  "notes": {},
