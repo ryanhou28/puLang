@@ -256,10 +256,10 @@ function toKaidaw(msg) { if (inKaidaw) window.parent.postMessage({ kaidaw: true,
 window.addEventListener("message", (e) => {
   const d = e.data;
   if (!d || !d.kaidaw || e.source !== window.parent) return;
-  if (d.type === "transport") {
+  if (d.kind === "transport") {
     S.transport = { ...d, stamp: performance.now() };
     renderTransport();
-  } else if (d.type === "revision") {
+  } else if (d.kind === "revision") {
     const first = S.revision === null;
     S.revision = d.revision;
     if (!first) view();
@@ -966,22 +966,22 @@ requestAnimationFrame(frame);
 function loopSection(play) {
   const o = occ(S.tag);
   if (!o) return;
-  toKaidaw({ type: "loop", from: o.start * PPQ, to: (o.start + o.bars * o.beatsPerBar) * PPQ, play: !!play });
+  toKaidaw({ kind: "loop", from: o.start * PPQ, to: (o.start + o.bars * o.beatsPerBar) * PPQ, play: !!play });
 }
 $("loopBtn").onclick = () => {
   const on = $("loopBtn").classList.contains("on");
-  if (on) toKaidaw({ type: "loop", enabled: false }); else loopSection(true);
+  if (on) toKaidaw({ kind: "loop", enabled: false }); else loopSection(true);
 };
-$("playBtn").onclick = () => toKaidaw({ type: "transport", action: "toggle" });
-$("toArrange").onclick = () => toKaidaw({ type: "mode", mode: "arrange" });
+$("playBtn").onclick = () => toKaidaw({ kind: "transport", action: "toggle" });
+$("toArrange").onclick = () => toKaidaw({ kind: "mode", mode: "arrange" });
 if (!inKaidaw) $("toArrange").style.display = "none";
 
 // ------------------------------------------------------------------ keys
 
 document.addEventListener("keydown", (e) => {
   if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
-  if (e.key === "`") { e.preventDefault(); toKaidaw({ type: "mode", mode: "arrange" }); return; }
-  if (e.code === "Space") { e.preventDefault(); toKaidaw({ type: "transport", action: "toggle" }); return; }
+  if (e.key === "`") { e.preventDefault(); toKaidaw({ kind: "mode", mode: "arrange" }); return; }
+  if (e.code === "Space") { e.preventDefault(); toKaidaw({ kind: "transport", action: "toggle" }); return; }
   if (e.key === "Enter" && S.pending.length) { e.preventDefault(); apply(); return; }
   if (e.key === "Escape") {
     if (S.pending.length) discard(); else { S.chip = null; S.msel = null; renderLanes(); renderMotifEditor(); }
@@ -1022,7 +1022,7 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(() => { if (S.song) { renderMap(); renderLanes(); } }, 80);
 });
 
-toKaidaw({ type: "hello" });
+toKaidaw({ kind: "hello" });
 view();
 </script>
 </body>

@@ -423,6 +423,42 @@ lowering like the others, and shown with how many notes nobody touched it would 
 change, which is how a motif rewrite, which reaches every chorus, ranks against a
 change to one phrase.
 
+### Compose mode
+
+kaiDAW's **compose** button (or the backquote key) swaps the arrangement for a full-screen page
+from the same companion, at `/compose`. It is for writing the song above its notes, with the
+transport shared: Space plays, L loops the section on screen, backquote goes back.
+
+- **The map** across the top is the form: one block per section occurrence, sized by its
+  bars, with its chords, and a line for each part that plays in it. A section made from
+  another (`chorus.transform("chorus_up", ...)`) is striped in its colour. Click a block to
+  open it; double-click to loop it.
+- **The section** below shows its chart, its parts, and the chosen part twice over: on a
+  staff, with the chord symbols, and in a piano roll under a lane of chords and a lane of
+  **chips**, one per statement in its melody (`hook`, `hook -2`, `hook vary 2`). Notes in the
+  roll are coloured as chord tones, tensions, or notes outside the key. Hovering a chip lights
+  its notes in both; clicking a note on the staff or in the roll selects its chip.
+- **The motifs** at the side, each with every place it is used, and the selected one on a
+  grid whose rows are the key's scale degrees: add, move, lengthen, sharpen or flatten notes,
+  or drag the motif's length.
+
+Every gesture is an edit: a chip moved a step (↑ ↓, Shift for an octave), inverted (I),
+reversed (R), ornamented (V), swapped for another motif, cut to its first notes, moved or
+deleted; a motif's notes; a chord (click it in the chord lane); the chart or the phrase as
+text. The edit stays pending: the song is compiled with it to the score, beside the song as
+kept, and the two are compared note by note. The roll draws what it adds and takes away, the
+staff colours what it adds, the parts it touches carry a count, and every section occurrence
+it reaches lights up on the map. That is the point of previewing: one note of `hook` moved a
+step reaches the intro, both choruses, the last chorus a semitone up and the outro, and a
+new first chord in the chorus revoices the bass and piano at the end of the sections before
+it. Enter keeps the edit (it goes into the overrides, like the edits above, and is pushed);
+Esc drops it. Once kept, B flips the song between before and after, so a looped section can
+be heard both ways; each state is compiled once, so flipping only pushes.
+
+The page follows the song file: save it in an editor and the view redraws. The staff needs
+[Verovio](https://www.verovio.org) (`pip install pypulang[notation]`); triplets are drawn
+rounded to the nearest sixteenth for now, and drum parts have no staff.
+
 ## Variations
 
 A variation is an alternative for one place in a song: a named bundle of the edits above,
