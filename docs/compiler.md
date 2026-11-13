@@ -362,6 +362,28 @@ note edit, an edit made when the source said one thing and applied after it chan
 reported as stale, and one whose place no longer exists as orphaned. `pulang edits` lists
 them as `level:target:field`, and `pulang drop` takes that name.
 
+An edit means what the same change to the source would. A section made from another by
+`transform` follows the other's edits, unless it differs there already or has an edit of its
+own, so a chord changed in the chorus is changed in the chorus made from it, and in the one
+a semitone up, since chords are numerals of the key.
+
+### Folding edits into the source
+
+`pulang fold song.py` writes the edits into the song's Python and drops them from its
+overrides, so the source stays the song. Each goes where a person would have put it: the
+argument of the call that set it (the literal, or the constant it names), a setter added to
+the track's chain when nothing set it, or a new line after the statement that made it, such
+as `verse.track("keys").voicing("rootless", 46, 64)` after a helper that voices every
+section's keys. The song's layout, comments and constants are kept: a constant two sections
+share is left alone and the edited section gets its own literal.
+
+To find the call, the builders record where in the song each value was set. Every rewrite is
+checked by compiling: an edit is folded only when the new source, with the edits still kept,
+compiles to exactly the same notes and project as the old one with all of them. Edits below
+the source's level (a chord or pitches at the score level, notes moved by hand) stay in the
+overrides, and so does any edit no rewrite reproduces, with the reason. `--dry-run` shows the
+diff without writing.
+
 `pulang serve song.py` serves a page that kaiDAW shows in its source tab. Select a clip, or
 notes in the piano roll, and it shows what produced them at every level, from the note in
 kaiDAW through the event and score notes to the chord slot, the chord and the section's
@@ -425,6 +447,7 @@ returns plain data:
 | `ir` | The IR at one stage, optionally one section |
 | `review` | The compiler's read-through, and each melody's range and density per section |
 | `edit`, `drop` | Change one thing above the notes and keep it, or forget it |
+| `fold` | Write the kept edits into the song's source, checked by compiling; `dry_run` shows the diff |
 | `propose`, `pick`, `drop_variation`, `variations` | Variations, as above |
 | `readings`, `keep_reading` | Pull the hand edits in a clip from kaiDAW and read them above the notes, as the companion page does; keep one |
 | `render` | Push to kaiDAW and bounce a section occurrence, some bars, or the song, with its levels |
