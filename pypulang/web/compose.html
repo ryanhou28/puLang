@@ -11,8 +11,17 @@
   Every gesture here becomes a pending edit of the song's intent, compiled beside
   the song and compared with it note by note, so the change is drawn before it
   is kept: on the map (where it reaches), in the piano roll (notes added and
-  taken away) and on the staff. Enter keeps it; Esc drops it; B flips between
-  before and after once it is kept, which with a loop playing is how to hear it.
+  taken away) and on the staff.
+
+  There are three states, and the label by the section's name always says which:
+  the song as kept (what kaiDAW plays), a preview (drawn here, not in kaiDAW),
+  and kept (just sent to kaiDAW). Typing previews as you go; Enter keeps; Esc
+  drops. Holding \ shows the song as kept while a preview is up. Once kept, B
+  flips kaiDAW between before and after, which with a loop playing is how to
+  hear a change.
+
+  Gestures go through one queue, so each builds on the one before even when the
+  compiler is slower than the hand.
 
   Inside kaiDAW the page talks to it with postMessage: kaiDAW sends the transport
   and the project's revision, and the page asks it to play, stop, loop a section,
@@ -24,6 +33,7 @@
     --line:#282d38; --line2:#333a48;
     --ink:#e6e9ef; --dim:#8b93a7; --dimmer:#5f6779;
     --accent:#5aa9e6; --warm:#e8a13a; --ok:#3fae5a; --bad:#e05c5c; --violet:#a78bfa;
+    --preview:#5aa9e6;
     --radius:4px;
   }
   * { box-sizing:border-box; }
@@ -39,6 +49,7 @@
   button.primary { background:var(--ok); border-color:var(--ok); color:#06170b; font-weight:600; }
   button:disabled { opacity:.4; cursor:default; }
   input:focus, select:focus { outline:none; border-color:var(--accent); }
+  input.bad { border-color:var(--bad) !important; }
   .dim { color:var(--dim); } .dimmer { color:var(--dimmer); }
   .lbl { color:var(--dimmer); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
   kbd { font:10px ui-monospace,monospace; color:var(--dim); border:1px solid var(--line2);
@@ -64,7 +75,6 @@
                background:#fff; box-shadow:0 0 0 2px rgba(0,0,0,.4); }
   #activity { position:absolute; top:62px; left:0; right:0; height:34px; }
   .act { position:absolute; height:3px; border-radius:1px; }
-  #mapHead .key span { margin-right:10px; }
   .playhead { position:absolute; top:-2px; bottom:0; width:2px; background:var(--warm);
               pointer-events:none; z-index:5; display:none; }
 
@@ -72,13 +82,14 @@
   #work { display:grid; grid-template-columns:1fr 360px; min-height:0; }
   #main { overflow:auto; padding:10px 14px 30px; min-width:0; }
   #side { border-left:1px solid var(--line); background:var(--panel); overflow:auto; padding:10px 12px 30px; }
-  .sechead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+  .sechead { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
   .sechead h2 { margin:0; font-size:18px; font-weight:600; }
   .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:4px 0; }
   .row input.wide { flex:1; min-width:200px; }
   .parts button { font-size:11.5px; padding:1px 7px; }
   .parts button .r { color:var(--dimmer); font-size:10px; margin-left:3px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:6px; margin:10px 0; }
+  .card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:6px; margin:10px 0;
+          transition:border-color .15s, box-shadow .15s; }
   .card > .head { display:flex; align-items:center; gap:8px; padding:5px 10px; border-bottom:1px solid var(--line); }
   .card > .head .spacer { flex:1; }
   .paper { background:#f7f5ef; border-radius:0 0 6px 6px; padding:6px 8px; color:#111; min-height:60px; }
@@ -93,6 +104,30 @@
   .chipbar .sep { width:1px; align-self:stretch; background:var(--line2); margin:0 3px; }
   .legend { display:flex; gap:12px; font-size:11px; color:var(--dim); }
   .legend i { display:inline-block; width:10px; height:8px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+  .chordInput { position:absolute; top:1px; z-index:6; font-size:12px; padding:1px 5px;
+                border-color:var(--accent); box-shadow:0 0 0 3px rgba(90,169,230,.25); }
+
+  /* --------------------------------------------- which state the page is in */
+  .state { display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:3px 10px;
+           border-radius:999px; border:1px solid var(--line2); color:var(--dim); white-space:nowrap; }
+  .state .dot { width:8px; height:8px; border-radius:50%; background:var(--dimmer); }
+  .state.preview { color:#cfe3f5; border-color:var(--preview); background:rgba(90,169,230,.12); }
+  .state.preview .dot { background:var(--preview); }
+  .state.working { color:#f3d29b; border-color:var(--warm); background:rgba(232,161,58,.10); }
+  .state.working .dot { background:var(--warm); animation:pulse 0.9s ease-in-out infinite; }
+  .state.kept { color:#9be3ab; border-color:var(--ok); background:rgba(63,174,90,.12); }
+  .state.kept .dot { background:var(--ok); }
+  .state.bad { color:#f1a3a3; border-color:var(--bad); background:rgba(224,92,92,.10); }
+  .state.bad .dot { background:var(--bad); }
+  .state.before { color:#e6e9ef; border-color:#e6e9ef; background:rgba(255,255,255,.08); }
+  @keyframes pulse { 50% { opacity:.25; } }
+  /* A preview is framed, so the staff and the roll are never mistaken for the song as kept */
+  body.previewing .music { border-color:var(--preview); box-shadow:0 0 0 1px var(--preview); }
+  body.previewing .music::after { content:"preview · not in kaiDAW yet"; position:absolute; right:10px; top:-9px;
+           background:var(--preview); color:#06121d; font-size:10px; font-weight:700; padding:0 6px; border-radius:3px; }
+  body.showbefore .music { border-color:#e6e9ef; box-shadow:0 0 0 1px #e6e9ef; }
+  body.showbefore .music::after { content:"before · as kept"; background:#e6e9ef; }
+  body.busy .music .paper, body.busy #laneHost { opacity:.55; transition:opacity .2s; }
 
   /* ------------------------------------------------------------ the motif side */
   #side h3 { margin:2px 0 6px; font-size:12px; font-weight:600; }
@@ -102,7 +137,7 @@
   .motif.on { background:rgba(90,169,230,.12); border-color:var(--accent); }
   .motif .t { color:var(--dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .motif .n { color:var(--dimmer); font-size:11px; }
-  .motif.edited b::after { content:" •"; color:var(--ok); }
+  .motif.edited b::after { content:" •"; color:var(--preview); }
   #degree { background:var(--sunk); border:1px solid var(--line); border-radius:var(--radius); margin:6px 0; }
   #degree svg { display:block; cursor:crosshair; }
   .uses { margin-top:6px; }
@@ -123,8 +158,6 @@
   #bar .msg { color:var(--dim); font-size:12px; }
   .seg button { border-radius:0; } .seg button:first-child { border-radius:4px 0 0 4px; }
   .seg button:last-child { border-radius:0 4px 4px 0; margin-left:-1px; }
-  #busy { color:var(--warm); font-size:12px; visibility:hidden; }
-  #busy.on { visibility:visible; }
 </style>
 </head>
 <body>
@@ -143,34 +176,35 @@
   <div id="main">
     <div class="sechead">
       <h2 id="secName">…</h2>
+      <span id="state" class="state"><span class="dot"></span><span id="stateText">loading</span></span>
       <span class="dim" id="secInfo"></span>
+      <span style="flex:1"></span>
       <button id="prevSec" title="Previous section ([)">◀</button>
       <button id="nextSec" title="Next section (])">▶</button>
-      <span style="flex:1"></span>
       <button id="playBtn" title="Play / stop (Space)">▶ play</button>
       <button id="loopBtn" title="Loop this section (L)">⟲ loop section</button>
     </div>
     <div class="row">
       <span class="lbl" style="width:52px">chart</span>
-      <input id="chart" class="wide" title="The section's chords, a bar between each | (Enter to preview)">
+      <input id="chart" class="wide" title="The section's chords, a bar between each |. Previews as you type; Enter keeps; Esc drops.">
     </div>
     <div class="row parts" id="parts"></div>
     <div class="row" id="melodyRow">
       <span class="lbl" style="width:52px">melody</span>
-      <input id="phrase" class="wide" title="Motifs and how each is developed: hook; hook -2; hook vary 2 (Enter to preview)">
+      <input id="phrase" class="wide" title="Motifs and how each is developed: hook; hook -2; hook vary 2. Previews as you type; Enter keeps; Esc drops.">
     </div>
     <div class="row" id="patternRow"><span class="lbl" style="width:52px">pattern</span><span id="pattern" class="dim"></span></div>
 
-    <div class="card">
+    <div class="card music">
       <div class="head">
         <span class="lbl">staff</span><span id="staffWhat" class="dim"></span>
         <span class="spacer"></span>
-        <button id="staffBefore" title="Hold to see the staff before the pending change">hold for before</button>
+        <button id="staffBefore" title="Hold to see the song as kept (or hold the \ key)">hold <kbd>\</kbd> for before</button>
       </div>
       <div class="paper" id="staff"></div>
     </div>
 
-    <div class="card">
+    <div class="card music">
       <div class="head">
         <span class="lbl">chords · phrase · roll</span>
         <span class="spacer"></span>
@@ -183,7 +217,7 @@
         </div>
         <button id="others" title="Show the other parts faintly">others</button>
       </div>
-      <div id="lanes"></div>
+      <div id="lanes"><div id="laneHost"></div></div>
       <div class="chipbar" id="chipbar"></div>
     </div>
   </div>
@@ -196,7 +230,6 @@
 </div>
 
 <section id="bar">
-  <span id="busy">compiling…</span>
   <div class="what" id="what"></div>
   <div id="actions"></div>
 </section>
@@ -206,6 +239,7 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const PPQ = 960;
+const TYPING_MS = 400;   // how long typing pauses before it is previewed
 const inKaidaw = window.parent !== window;
 const NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
 const PALETTE = ["#7fb7e6", "#e6b45a", "#8fd18f", "#e48a8a", "#b9a2ea", "#6fd1c4", "#e99bc9",
@@ -214,12 +248,23 @@ const PALETTE = ["#7fb7e6", "#e6b45a", "#8fd18f", "#e48a8a", "#b9a2ea", "#6fd1c4
 const S = {
   song: null, section: null, tag: null, track: null,
   pending: [], change: null, staff: null, ab: null, error: null, message: "",
-  chip: null, motif: null, draft: null, sel: null, focus: null,
+  chip: null, motif: null, draft: null, msel: null, focus: null,
   others: false, hover: null, transport: null, revision: null, stamp: null,
+  // what the page is doing: "loading", "idle", "previewing", "preview", "keeping", "kept"
+  phase: "loading", busy: 0,
+  before: null, showBefore: false, keptTimer: null, dragging: false,
+  epoch: 0,   // bumped when pending edits are dropped, so an answer already on its way is ignored
 };
-let seq = 0;
 
 // ------------------------------------------------------------------ talking
+//
+// Every request goes through one queue. A gesture is sent with the pending edits
+// as the last answer left them, so a second gesture made while the first is
+// still compiling must wait for it, or it would build on a stale state and the
+// first would be lost. A newer typed value replaces an older one still waiting.
+
+const queue = [];
+let pumping = null;
 
 async function post(path, body) {
   const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" },
@@ -229,27 +274,80 @@ async function post(path, body) {
   return data;
 }
 
-/// Ask for the view with the pending edits and, optionally, one more change.
-async function view(change) {
-  const mine = ++seq;
-  busy(true);
+function same(a, b) {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === "set") return a.target === b.target && a.field === b.field;
+  if (a.kind === "motif") return a.motif === b.motif;
+  return false;
+}
+
+/// Ask for a change to be previewed (or, with none, for the view as it stands).
+function change(c) {
+  if (c) for (let i = queue.length - 1; i >= 0; i--) if (queue[i].kind === "view" && same(queue[i].change, c)) queue.splice(i, 1);
+  if (!c && queue.some((q) => q.kind === "view" && !q.change)) return settled();
+  queue.push({ kind: "view", change: c ?? null });
+  return pump();
+}
+const refresh = () => change(null);
+const settled = () => pumping ?? Promise.resolve();
+
+function pump() {
+  if (!pumping) {
+    pumping = (async () => {
+      while (queue.length) {
+        const q = queue.shift();
+        if (q.kind === "apply") await doKeep();
+        else if (q.kind === "ab") await doAb(q.side);
+        else await fetchView(q.change);
+      }
+    })().finally(() => { pumping = null; });
+  }
+  return pumping;
+}
+
+async function fetchView(c) {
+  S.busy++;
+  if (c && S.phase !== "keeping") S.phase = "previewing";
+  renderState();
+  const epoch = S.epoch;
   try {
-    const r = await post("/compose/view", { pending: S.pending, change, tag: S.tag, track: S.track });
-    if (mine !== seq) return;
+    const r = await post("/compose/view", { pending: S.pending, change: c, tag: S.tag, track: S.track });
+    if (epoch !== S.epoch) return;   // dropped while it was compiling; the refresh queued after it redraws
+    const typing = document.activeElement;
+    if (c && typing?.tagName === "INPUT") typing.classList.toggle("bad", !!r.error);
     S.song = r.song; S.section = r.section; S.tag = r.section.tag; S.track = r.track;
     S.pending = r.pending; S.change = r.change; S.staff = r.staff; S.ab = r.ab;
-    S.error = r.error;
-    if (change) S.message = "";
+    S.error = r.error; S.stamp = JSON.stringify(r.stamp);
+    if (c) S.message = "";
+    if (S.phase !== "keeping" && S.phase !== "kept") S.phase = S.pending.length ? "preview" : "idle";
+    if (S.pending.length) loadBefore(); else S.before = null;
     syncDraft();
     render();
   } catch (e) {
-    if (mine === seq) { S.error = String(e.message || e); renderBar(); }
+    S.error = String(e.message || e);
+    if (S.phase === "previewing") S.phase = S.pending.length ? "preview" : "idle";
+    renderBar();
   } finally {
-    if (mine === seq) busy(false);
+    S.busy--;
+    renderState();
   }
 }
 
-function busy(on) { $("busy").classList.toggle("on", on); }
+/// The section as kept, beside a preview: what holding \ shows, and what the chord
+/// lane compares against. Fetched once per preview, from the compile the server
+/// already has.
+let beforeFor = "";
+async function loadBefore() {
+  const key = `${S.tag}|${S.track}|${JSON.stringify(S.pending)}`;
+  if (beforeFor === key && S.before) return;
+  beforeFor = key;
+  try {
+    const r = await post("/compose/view", { pending: [], tag: S.tag, track: S.track });
+    if (beforeFor !== key) return;
+    S.before = { section: r.section, staff: r.staff, tag: r.section.tag };
+    if (S.showBefore) { renderState(); renderStaff(); renderLanes(); renderSection(); } else renderLanes();
+  } catch { /* the preview still stands without it */ }
+}
 
 function toKaidaw(msg) { if (inKaidaw) window.parent.postMessage({ kaidaw: true, ...msg }, "*"); }
 
@@ -262,17 +360,19 @@ window.addEventListener("message", (e) => {
   } else if (d.kind === "revision") {
     const first = S.revision === null;
     S.revision = d.revision;
-    if (!first) view();
+    // A revision this page caused needs no refresh; one from elsewhere (a hand
+    // edit, an agent) does, but never in the middle of a gesture.
+    if (!first && !pumping && S.phase !== "keeping") refresh();
   }
 });
 
 // The song file changing under the page (an editor, fold, an agent) redraws it.
 setInterval(async () => {
+  if (pumping || S.phase === "keeping") return;
   try {
     const h = await fetch("/compose/stamp").then((r) => r.json());
     const stamp = JSON.stringify(h.stamp);
-    if (S.stamp !== null && stamp !== S.stamp) view();
-    S.stamp = stamp;
+    if (S.stamp !== null && stamp !== S.stamp && !pumping) { S.stamp = stamp; refresh(); }
   } catch { /* the server is restarting */ }
 }, 2000);
 
@@ -280,7 +380,10 @@ setInterval(async () => {
 
 const form = () => S.song?.form ?? [];
 const occ = (tag) => form().find((o) => o.tag === tag);
-const part = (name) => S.section?.parts.find((p) => p.track === name);
+// What the music cards draw: the preview, or while \ is held, the section as kept
+const shown = () => (S.showBefore && S.before?.tag === S.tag ? S.before : S);
+const partIn = (section, name) => section?.parts.find((p) => p.track === name);
+const part = (name) => partIn(S.section, name);
 const sectionLen = () => S.section.bars * S.section.beatsPerBar;
 const pc = (p) => ((p % 12) + 12) % 12;
 const noteName = (p) => NAMES[pc(p)] + (Math.floor(p / 12) - 1);
@@ -289,17 +392,18 @@ function colorOf(name) {
   const base = S.song.sections[name]?.derived ?? name;
   return PALETTE[Math.max(0, names.indexOf(base)) % PALETTE.length];
 }
-function chordAt(beat) {
-  return S.section.chords.find((c) => c.at <= beat && beat < c.at + c.dur) ?? null;
+function chordAt(section, beat) {
+  return section.chords.find((c) => c.at <= beat && beat < c.at + c.dur) ?? null;
 }
-function kindOf(note) {
-  const ch = chordAt(note.s);
+function kindOf(section, note) {
+  const ch = chordAt(section, note.s);
   if (ch && ch.tones.includes(pc(note.p))) return "ct";
-  if (S.section.scale.includes(pc(note.p))) return "tn";
+  if (section.scale.includes(pc(note.p))) return "tn";
   return "out";
 }
 const KIND = { ct: "var(--accent)", tn: "var(--violet)", out: "var(--warm)" };
 function changedHere(track) {
+  if (S.showBefore) return { added: [], removed: [] };
   return S.change?.parts?.[S.tag]?.[track] ?? { added: [], removed: [] };
 }
 function degreeLabel(step) {
@@ -311,6 +415,30 @@ function fmtBeat(b) {
   if (!frac) return String(whole);
   const den = [2, 3, 4, 6, 8, 12, 16].find((d) => Math.abs(frac * d - Math.round(frac * d)) < 1e-6) ?? 16;
   return `${whole}+${Math.round(frac * den)}/${den}`;
+}
+
+// ------------------------------------------------------------------ state
+
+function renderState() {
+  const el = $("state");
+  let cls = "", text = "";
+  const reach = S.change?.tags?.length ?? 0;
+  if (S.showBefore) { cls = "before"; text = shown() === S ? "fetching the song as kept…" : "showing the song as kept"; }
+  else if (S.phase === "loading") { cls = "working"; text = "loading…"; }
+  else if (S.phase === "keeping") { cls = "working"; text = "keeping: compiling and sending to kaiDAW…"; }
+  else if (S.phase === "previewing" || (S.busy && S.pending.length)) { cls = "working"; text = "previewing…"; }
+  else if (S.phase === "preview") {
+    cls = "preview";
+    text = `preview · ${reach ? `reaches ${reach} section${reach === 1 ? "" : "s"}` : "sounds the same"} · not in kaiDAW yet`;
+  } else if (S.phase === "kept") { cls = "kept"; text = "kept · kaiDAW has it" + (inKaidaw ? " · B flips before/after" : ""); }
+  else { text = "as kept · what kaiDAW plays"; }
+  if (S.error && S.phase !== "keeping") { cls = "bad"; text = S.error.split("\n").pop().slice(0, 90); }
+  el.className = "state " + cls;
+  el.title = S.error || text;
+  $("stateText").textContent = text;
+  document.body.classList.toggle("previewing", S.pending.length > 0 && !S.showBefore);
+  document.body.classList.toggle("showbefore", S.showBefore);
+  document.body.classList.toggle("busy", S.busy > 0 || S.phase === "keeping");
 }
 
 // ------------------------------------------------------------------ the map
@@ -345,12 +473,12 @@ function renderMap() {
       + `<div class="ch">${o.bars} bars${o.key !== S.song.key ? " · " + esc(o.key) : ""}${o.tempo !== S.song.tempo ? " · " + o.tempo : ""}</div>`
       + (reach.has(o.tag) ? `<span class="badge">${reach.get(o.tag)}</span>` : "")
       + (usedIn.has(o.section) ? `<span class="uses" title="uses ${esc(motif.name)}"></span>` : "");
-    b.title = `${o.tag} · bars ${o.firstBar}–${o.firstBar + o.bars - 1}${derived ? " · made from " + derived : ""}`;
+    b.title = `${o.tag} · bars ${o.firstBar}–${o.firstBar + o.bars - 1}${derived ? " · made from " + derived : ""}`
+      + (reach.has(o.tag) ? ` · the preview changes ${reach.get(o.tag)} notes here` : "");
     b.onclick = () => focusSection(o.tag);
     b.ondblclick = () => { focusSection(o.tag); loopSection(true); };
     box.appendChild(b);
   }
-  // Which parts play where, a thin line each
   const act = $("activity");
   act.innerHTML = "";
   const tracks = song.tracks.filter((t) => t.role !== "rhythm");
@@ -405,15 +533,7 @@ $("parts").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-track]");
   if (!b) return;
   S.track = b.dataset.track; S.chip = null;
-  view();
-});
-$("chart").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); change({ kind: "set", target: `${S.section.section}/harmony`, field: "chart", value: e.target.value }); e.target.blur(); }
-  if (e.key === "Escape") { e.target.value = S.section.chart; e.target.blur(); }
-});
-$("phrase").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); change({ kind: "set", target: `${S.section.section}/${S.track}`, field: "melody", value: e.target.value }); e.target.blur(); }
-  if (e.key === "Escape") { e.target.value = part(S.track)?.melody?.text ?? ""; e.target.blur(); }
+  refresh();
 });
 $("prevSec").onclick = () => step(-1);
 $("nextSec").onclick = () => step(1);
@@ -425,27 +545,56 @@ function step(d) {
 function focusSection(tag, track) {
   S.tag = tag; S.chip = null;
   if (track) S.track = track;
-  else {
-    const name = occ(tag)?.section;
-    const sec = S.song.sections[name];
-    if (sec && S.song.activity[tag] && !S.song.activity[tag][S.track]) S.track = null;
-  }
-  view();
+  else if (S.song.activity[tag] && !S.song.activity[tag][S.track]) S.track = null;
+  refresh();
 }
+
+/// A text field that previews as you type: a pause sends what is there, Enter
+/// sends it and keeps it, Esc puts the pending edits back as they were before
+/// the field was touched.
+function live(el, make, original) {
+  let timer = null, sent = null, before = null;
+  const send = () => {
+    clearTimeout(timer);
+    if (el.value.trim() && el.value !== sent) { sent = el.value; change(make(el.value)); }
+  };
+  el.addEventListener("focus", () => { before = S.pending.slice(); sent = el.value; el.classList.remove("bad"); });
+  el.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(send, TYPING_MS); });
+  el.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); send(); el.blur(); keep(); }
+    if (e.key === "Escape") {
+      e.preventDefault(); clearTimeout(timer);
+      queue.length = 0; S.epoch++;
+      S.pending = before ?? S.pending;
+      S.error = null;
+      el.value = original(); sent = el.value;
+      el.classList.remove("bad");
+      el.blur();
+      refresh();
+    }
+  });
+  el.addEventListener("blur", () => { if (el.value !== sent) send(); });
+}
+live($("chart"), (v) => ({ kind: "set", target: `${S.section.section}/harmony`, field: "chart", value: v }),
+     () => S.section?.chart ?? "");
+live($("phrase"), (v) => ({ kind: "set", target: `${S.section.section}/${S.track}`, field: "melody", value: v }),
+     () => part(S.track)?.melody?.text ?? "");
 
 // ------------------------------------------------------------------ staff
 
-function renderStaff(staff) {
-  const st = staff ?? S.staff;
+function renderStaff() {
+  const v = shown();
+  const st = v.staff;
   const box = $("staff");
-  const cur = part(S.track);
+  const cur = partIn(v.section, S.track);
   $("staffWhat").textContent = S.track ? `${S.track} · ${S.section.section}` : "";
   if (!S.track || !st) { box.innerHTML = `<div class="err">Pick a part to see it on a staff.</div>`; return; }
   if (cur?.role === "rhythm") { box.innerHTML = `<div class="err">Drum parts are not drawn on a staff yet.</div>`; return; }
   if (st.error) { box.innerHTML = `<div class="err">${esc(st.error)}</div>`; return; }
   box.innerHTML = st.svg + (st.rounded ? `<div class="dimmer" style="font-size:11px">${st.rounded} notes drawn rounded to the nearest sixteenth (triplets are not drawn yet)</div>` : "");
   S.svgIds = st.ids ?? {};
-  S.locToSvg = Object.fromEntries(Object.entries(S.svgIds).map(([k, v]) => [v, k]));
+  S.locToSvg = Object.fromEntries(Object.entries(S.svgIds).map(([k, val]) => [val, k]));
   applyHighlight();
 }
 $("staff").addEventListener("click", (e) => {
@@ -462,15 +611,16 @@ $("staff").addEventListener("mouseover", (e) => {
   S.hover = note ? { notes: new Set([loc]) } : null;
   applyHighlight();
 });
-const before = $("staffBefore");
-before.onmousedown = async () => {
-  if (!S.pending.length) return;
-  before.classList.add("on");
-  const r = await post("/compose/view", { pending: [], tag: S.tag, track: S.track });
-  if (before.classList.contains("on")) renderStaff(r.staff);
-};
-const release = () => { if (before.classList.contains("on")) { before.classList.remove("on"); renderStaff(); } };
-before.onmouseup = release; before.onmouseleave = release;
+
+function showBefore(on) {
+  if (on === S.showBefore) return;
+  if (on && !S.pending.length) return;
+  S.showBefore = on;
+  $("staffBefore").classList.toggle("on", on);
+  renderState(); renderStaff(); renderLanes(); renderSection();
+}
+$("staffBefore").onmousedown = () => showBefore(true);
+$("staffBefore").onmouseup = $("staffBefore").onmouseleave = () => showBefore(false);
 
 // ------------------------------------------------------------------ lanes: chords, chips, roll
 
@@ -478,15 +628,17 @@ const GUT = 56;          // the left gutter, for row labels
 const LANE_CHORD = 24, LANE_CHIP = 26;
 
 function renderLanes() {
-  const box = $("lanes");
-  const W = Math.max(400, box.clientWidth);
-  const len = sectionLen();
+  const v = shown();
+  const sec = v.section;
+  const host = $("laneHost");
+  const W = Math.max(400, $("lanes").clientWidth);
+  const len = sec.bars * sec.beatsPerBar;
   const bw = (W - GUT - 8) / len;
   const X = (b) => GUT + b * bw;
-  const cur = part(S.track);
+  const cur = partIn(sec, S.track);
   const ch = changedHere(S.track);
   const mine = cur?.notes ?? [];
-  const pitched = S.section.parts.filter((p) => p.role !== "rhythm" && p.track !== S.track);
+  const pitched = sec.parts.filter((p) => p.role !== "rhythm" && p.track !== S.track);
   const others = S.others ? pitched.flatMap((p) => p.notes.map((n) => ({ ...n, track: p.track }))) : [];
   const ps = [...mine, ...ch.removed].map((n) => n.p);
   let lo = ps.length ? Math.min(...ps) - 3 : 55, hi = ps.length ? Math.max(...ps) + 3 : 79;
@@ -495,31 +647,31 @@ function renderLanes() {
   const rollTop = LANE_CHORD + LANE_CHIP + 6;
   const H = rollTop + (hi - lo + 1) * rh + 4;
   const Y = (p) => rollTop + (hi - p) * rh;
-  const out = [];
-  out.push(`<svg width="${W}" height="${H}" id="laneSvg">`);
-  // Rows: in-key rows lighter, C labelled
+  // Chords the preview changed, against the section as kept
+  const keptChords = new Map((!S.showBefore && S.before?.tag === S.tag ? S.before.section.chords : []).map((c) => [c.position, c.symbol]));
+  const out = [`<svg width="${W}" height="${H}">`];
   for (let p = lo; p <= hi; p++) {
-    const inKey = S.section.scale.includes(pc(p));
+    const inKey = sec.scale.includes(pc(p));
     out.push(`<rect x="${GUT}" y="${Y(p)}" width="${W - GUT}" height="${rh}" fill="${inKey ? "#161a21" : "#111318"}"/>`);
     if (pc(p) === 0 || p === lo + 1) out.push(`<text x="${GUT - 6}" y="${Y(p) + rh - 2}" font-size="9.5" fill="#5f6779" text-anchor="end">${noteName(p)}</text>`);
   }
-  // Beats and bars
   for (let b = 0; b <= len; b++) {
-    const bar = b % S.section.beatsPerBar === 0;
+    const bar = b % sec.beatsPerBar === 0;
     out.push(`<line x1="${X(b)}" x2="${X(b)}" y1="${bar ? 0 : rollTop}" y2="${H}" stroke="${bar ? "#333a48" : "#1f232b"}"/>`);
-    if (bar && b < len) out.push(`<text x="${X(b) + 3}" y="${rollTop + 10}" font-size="9" fill="#5f6779">${S.section.firstBar + b / S.section.beatsPerBar}</text>`);
+    if (bar && b < len) out.push(`<text x="${X(b) + 3}" y="${rollTop + 10}" font-size="9" fill="#5f6779">${sec.firstBar + b / sec.beatsPerBar}</text>`);
   }
-  // Chord lane
-  for (const c of S.section.chords) {
-    const editable = S.section.chordStarts.includes(c.position);
+  for (const c of sec.chords) {
+    const editable = sec.chordStarts.includes(c.position) && !S.showBefore;
+    const was = keptChords.get(c.position);
+    const changed = was !== undefined && was !== c.symbol;
     out.push(`<g class="chordbox" data-pos="${esc(c.position)}" style="cursor:${editable ? "text" : "default"}">`
-      + `<rect x="${X(c.at) + 1}" y="2" width="${Math.max(4, c.dur * bw - 2)}" height="${LANE_CHORD - 4}" rx="3" fill="#1e222a" stroke="#333a48"/>`
-      + `<text x="${X(c.at) + 6}" y="${LANE_CHORD - 8}" font-size="12" fill="#e6e9ef">${esc(c.symbol)}</text></g>`);
+      + `<rect x="${X(c.at) + 1}" y="2" width="${Math.max(4, c.dur * bw - 2)}" height="${LANE_CHORD - 4}" rx="3" fill="${changed ? "rgba(90,169,230,.25)" : "#1e222a"}" stroke="${changed ? "var(--preview)" : "#333a48"}"/>`
+      + `<text x="${X(c.at) + 6}" y="${LANE_CHORD - 8}" font-size="12" fill="#e6e9ef">${esc(c.symbol)}${changed ? `<tspan fill="#8b93a7" font-size="10"> was ${esc(was)}</tspan>` : ""}</text>`
+      + `<title>${editable ? "Click to change this chord" : "This chord comes from the section's chart"}</title></g>`);
   }
-  // Chips: the melody's placements
   if (cur?.melody) {
     for (const c of cur.melody.chips) {
-      const sel = S.chip === c.index;
+      const sel = S.chip === c.index && !S.showBefore;
       const w = Math.max(6, c.length * bw - 2);
       const fill = c.motif ? (sel ? "rgba(90,169,230,.35)" : "rgba(90,169,230,.12)") : "transparent";
       out.push(`<g class="chip" data-index="${c.index}" style="cursor:pointer">`
@@ -529,33 +681,31 @@ function renderLanes() {
   } else {
     out.push(`<text x="${GUT}" y="${LANE_CHORD + LANE_CHIP - 9}" font-size="11" fill="#5f6779">${cur ? (cur.plays === "pattern" ? "plays a pattern: " + esc(cur.pattern) : "written notes") : ""}</text>`);
   }
-  // The other parts, faint
   for (const n of others) {
     if (n.p < lo || n.p > hi) continue;
     out.push(`<rect x="${X(n.s)}" y="${Y(n.p) + 1}" width="${Math.max(2, n.d * bw - 1)}" height="${rh - 2}" fill="#8b93a7" opacity=".18"><title>${esc(n.track)} ${noteName(n.p)}</title></rect>`);
   }
-  // Taken away: dashed ghosts
   for (const n of ch.removed) {
-    out.push(`<rect x="${X(n.s) + .5}" y="${Y(n.p) + 1.5}" width="${Math.max(2, n.d * bw - 2)}" height="${rh - 3}" fill="none" stroke="var(--bad)" stroke-dasharray="3 2" rx="2"/>`);
+    out.push(`<rect x="${X(n.s) + .5}" y="${Y(n.p) + 1.5}" width="${Math.max(2, n.d * bw - 2)}" height="${rh - 3}" fill="none" stroke="var(--bad)" stroke-dasharray="3 2" rx="2"><title>taken away: ${noteName(n.p)} · beat ${fmtBeat(n.s)}</title></rect>`);
   }
-  // This part's notes
   const added = new Set(ch.added.map((n) => n.id));
   for (const n of mine) {
-    const k = kindOf(n);
+    const k = kindOf(sec, n);
     const add = added.has(n.id);
     const sel = S.sel === n.id;
     out.push(`<rect class="nt" data-id="${esc(n.id)}" x="${X(n.s) + .5}" y="${Y(n.p) + 1}" width="${Math.max(2, n.d * bw - 1.5)}" height="${rh - 2}" rx="2" fill="${KIND[k]}" opacity="${0.55 + (n.v / 127) * 0.45}" stroke="${add ? "var(--ok)" : sel ? "#fff" : "none"}" stroke-width="${add ? 2 : 1.5}" style="cursor:pointer"><title>${noteName(n.p)} · beat ${fmtBeat(n.s)} · ${k === "ct" ? "chord tone" : k === "tn" ? "tension" : "outside the key"}${add ? " · added" : ""}</title></rect>`);
   }
   out.push(`<line id="rollHead" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--warm)" stroke-width="2" style="display:none"/>`);
   out.push(`</svg>`);
-  box.innerHTML = out.join("");
+  host.innerHTML = out.join("");
   S.laneX = { X, bw, len };
   applyHighlight();
   renderChipbar();
   renderTransport();
 }
 
-$("lanes").addEventListener("click", (e) => {
+$("laneHost").addEventListener("click", (e) => {
+  if (S.showBefore) return;
   const chip = e.target.closest("g.chip");
   if (chip) { selectChip(Number(chip.dataset.index)); return; }
   const nt = e.target.closest("rect.nt");
@@ -563,7 +713,7 @@ $("lanes").addEventListener("click", (e) => {
   const cb = e.target.closest("g.chordbox");
   if (cb && S.section.chordStarts.includes(cb.dataset.pos)) editChord(cb.dataset.pos);
 });
-$("lanes").addEventListener("mouseover", (e) => {
+$("laneHost").addEventListener("mouseover", (e) => {
   const chip = e.target.closest("g.chip");
   const nt = e.target.closest("rect.nt");
   if (chip) S.hover = { chip: Number(chip.dataset.index) };
@@ -586,7 +736,7 @@ function applyHighlight() {
   if (S.hover?.notes) ids = S.hover.notes;
   else if (S.hover?.chip !== undefined) ids = chipNotes(S.hover.chip);
   else if (S.chip !== null) ids = chipNotes(S.chip);
-  document.querySelectorAll("#lanes rect.nt").forEach((r) => {
+  document.querySelectorAll("#laneHost rect.nt").forEach((r) => {
     r.style.filter = ids.has(r.dataset.id) ? "brightness(1.5) drop-shadow(0 0 3px #fff)" : "";
   });
   document.querySelectorAll("#staff g.hl").forEach((g) => g.classList.remove("hl"));
@@ -609,30 +759,27 @@ function selectNote(n) {
 function selectChip(index) {
   S.chip = index; S.focus = "chip"; S.sel = null;
   const c = part(S.track)?.melody?.chips.find((x) => x.index === index);
-  if (c?.motif) { S.motif = c.motif; syncDraft(); renderSide(); }
+  if (c?.motif && c.motif !== S.motif) { S.motif = c.motif; syncDraft(true); renderSide(); }
   renderLanes();
 }
 
+/// A chord typed in place. It previews as you type, and stays previewed when the
+/// box closes; Enter keeps it, Esc puts things back as they were.
 function editChord(position) {
+  $("lanes").querySelector(".chordInput")?.remove();
   const c = S.section.chords.find((x) => x.position === position);
+  const target = `${S.section.section}/harmony@${position}`;
   const { X, bw } = S.laneX;
   const input = document.createElement("input");
+  input.className = "chordInput";
   input.value = c.symbol;
-  Object.assign(input.style, { position: "absolute", left: X(c.at) + 1 + "px", top: "1px",
-                                width: Math.max(80, c.dur * bw - 2) + "px", zIndex: 4 });
-  $("lanes").appendChild(input);
+  input.title = "Previews as you type · Enter keeps · Esc drops";
+  input.style.left = X(c.at) + 1 + "px";
+  input.style.width = Math.max(90, c.dur * bw - 2) + "px";
+  $("lanes").appendChild(input);   // beside the drawing, so redrawing it leaves the box alone
+  live(input, (v) => ({ kind: "set", target, field: "chord", value: v }), () => c.symbol);
+  input.addEventListener("blur", () => setTimeout(() => input.remove(), 0));
   input.focus(); input.select();
-  let finished = false;
-  const done = (keep) => {
-    if (finished) return;
-    finished = true;
-    input.remove();
-    if (keep && input.value.trim() && input.value.trim() !== c.symbol) {
-      change({ kind: "set", target: `${S.section.section}/harmony@${position}`, field: "chord", value: input.value.trim() });
-    }
-  };
-  input.onkeydown = (e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); e.stopPropagation(); };
-  input.onblur = () => done(false);
 }
 
 // The gestures a selected chip offers
@@ -642,8 +789,8 @@ function renderChipbar() {
   const c = cur?.melody?.chips.find((x) => x.index === S.chip);
   if (!c) {
     bar.innerHTML = cur?.melody
-      ? `<span class="dimmer">Click a chip, or a note, to change that statement of its motif. Hover one to see its notes.</span>`
-      : `<span class="dimmer">${cur ? "Only melodies are drawn as chips so far; patterns are changed in the source tab." : ""}</span>`;
+      ? `<span class="dimmer">Click a chip, or a note, to change that statement of its motif. Click a chord to retype it. Hover a chip to see its notes.</span>`
+      : `<span class="dimmer">${cur ? "Only melodies are drawn as chips so far; click a chord to retype it." : ""}</span>`;
     return;
   }
   const motifs = S.song.motifs.map((m) => `<option ${m.name === c.motif ? "selected" : ""}>${esc(m.name)}</option>`).join("");
@@ -677,7 +824,7 @@ function renderChipbar() {
 }
 
 function chipOp(op, arg) {
-  if (S.chip === null) return;
+  if (S.chip === null || S.showBefore) return;
   const index = S.chip;
   if (op === "left" && index > 0) S.chip = index - 1;
   if (op === "right") S.chip = index + 1;
@@ -686,16 +833,17 @@ function chipOp(op, arg) {
   change({ kind: "phrase", target: `${S.section.section}/${S.track}`, index, op, arg: arg ?? null });
 }
 
-function change(c) { view(c); }
-
 // ------------------------------------------------------------------ motifs
 
-function syncDraft() {
+/// The motif being edited, as the grid holds it. Left alone while a change to it
+/// is still on its way, so the grid does not jump back under the hand.
+function syncDraft(force) {
   if (!S.song) return;
   if (!S.motif && S.song.motifs.length) {
     const chip = part(S.track)?.melody?.chips.find((c) => c.motif);
     S.motif = chip?.motif ?? S.song.motifs[0].name;
   }
+  if (!force && (S.dragging || queue.some((q) => q.change?.kind === "motif" && q.change.motif === S.motif))) return;
   const m = S.song.motifs.find((x) => x.name === S.motif);
   S.draft = m ? { name: m.name, notes: m.notes.map((n) => ({ ...n })), length: m.length } : null;
 }
@@ -713,7 +861,7 @@ $("motifs").addEventListener("click", (e) => {
   const row = e.target.closest(".motif");
   if (!row) return;
   S.motif = row.dataset.name; S.focus = "motif"; S.msel = null;
-  syncDraft(); renderSide(); renderMap();
+  syncDraft(true); renderSide(); renderMap();
 });
 $("motifs").addEventListener("mouseover", (e) => {
   const row = e.target.closest(".motif");
@@ -724,11 +872,47 @@ $("motifs").addEventListener("mouseleave", () => { S.hover = null; renderMap(); 
 
 // The degree grid: rows are the key's scale steps, so a note is a degree before it is a pitch.
 const DG = { colW: 0, rowH: 15, lo: 0, hi: 0, grid: 0.5, left: 34 };
+let shellFor = null;
+
+/// The editor's frame is built once per motif, so its text field keeps focus
+/// and what is typed in it while the grid and the uses redraw around it.
 function renderMotifEditor() {
   const box = $("motifEdit");
   const d = S.draft;
-  if (!d) { box.innerHTML = ""; return; }
+  if (!d) { box.innerHTML = ""; shellFor = null; return; }
+  if (shellFor !== d.name) {
+    shellFor = d.name;
+    box.innerHTML = `
+      <div class="row" style="margin-top:12px"><b>${esc(d.name)}</b><span class="dimmer">in degrees of the key</span><span style="flex:1"></span>
+        <button id="dgGrid" title="Grid: eighths or sixteenths"></button></div>
+      <div id="degree"></div>
+      <div class="row"><input id="motifText" class="wide" title="The motif as text. Previews as you type; Enter keeps; Esc drops."></div>
+      <div class="lbl" id="usedCount" style="margin-top:8px"></div>
+      <div class="uses" id="usesList"></div>
+      <div class="help">Click an empty cell to add a note, drag it to move it, drag its right end to lengthen it, drag the orange bar to change the motif's length. With a note selected: <kbd>↑</kbd><kbd>↓</kbd> a step, <kbd>Shift</kbd>+<kbd>↑</kbd><kbd>↓</kbd> sharpen or flatten, <kbd>←</kbd><kbd>→</kbd> move, <kbd>Del</kbd> remove, <kbd>A</kbd> accent. Each change previews; <kbd>⏎</kbd> keeps.</div>`;
+    $("dgGrid").onclick = () => { DG.grid = DG.grid === 0.5 ? 0.25 : 0.5; renderMotifEditor(); };
+    const name = d.name;
+    live($("motifText"), (v) => ({ kind: "set", target: `motif/${name}`, field: "notes", value: v }),
+         () => S.song.motifs.find((x) => x.name === name)?.text ?? "");
+    $("usesList").addEventListener("click", (e) => {
+      const u = e.target.closest(".use");
+      const tag = u && form().find((o) => o.section === u.dataset.section)?.tag;
+      if (!tag) return;
+      S.chip = Number(u.dataset.index); S.tag = tag; S.track = u.dataset.track;
+      refresh();
+    });
+  }
   const m = S.song.motifs.find((x) => x.name === d.name);
+  $("dgGrid").textContent = DG.grid === 0.5 ? "⅛" : "⅟16";
+  const text = S.pending.find((p) => p.target === `motif/${d.name}`)?.value ?? m?.text ?? "";
+  if (document.activeElement !== $("motifText")) $("motifText").value = text;
+  $("usedCount").textContent = `used ${m?.uses.length ?? 0} times`;
+  $("usesList").innerHTML = (m?.uses ?? []).map((u) => `<div class="use" data-section="${esc(u.section)}" data-track="${esc(u.track)}" data-index="${u.index}"><span class="w">${esc(u.section)} · ${esc(u.track)}</span><span>${esc(u.text)}</span></div>`).join("") || '<span class="dimmer">not used</span>';
+  drawGrid();
+}
+
+function drawGrid() {
+  const d = S.draft;
   const steps = d.notes.map((n) => n.step);
   DG.lo = Math.min(-3, ...steps) - 2; DG.hi = Math.max(8, ...steps) + 2;
   const W = 330, cols = Math.max(1, Math.round(d.length / DG.grid));
@@ -757,39 +941,16 @@ function renderMotifEditor() {
       + `<rect class="rh" data-i="${i}" x="${X(n.s + n.d) - 5}" y="${Y(n.step) + 1}" width="5" height="${DG.rowH - 2}" fill="transparent" style="cursor:ew-resize"/></g>`);
   });
   out.push(`<text x="${DG.left}" y="${H - 3}" font-size="10" fill="#5f6779">${d.length} beats · grid ${DG.grid === 0.5 ? "⅛" : "⅟16"}</text></svg>`);
-  const uses = (m?.uses ?? []).map((u) => `<div class="use" data-section="${esc(u.section)}" data-track="${esc(u.track)}" data-index="${u.index}"><span class="w">${esc(u.section)} · ${esc(u.track)}</span><span>${esc(u.text)}</span></div>`).join("");
-  const text = S.pending.find((p) => p.target === `motif/${d.name}`)?.value ?? m?.text ?? "";
-  box.innerHTML = `
-    <div class="row" style="margin-top:12px"><b>${esc(d.name)}</b><span class="dimmer">in degrees of the key</span><span style="flex:1"></span>
-      <button id="dgGrid" title="Grid: eighths or sixteenths">${DG.grid === 0.5 ? "⅛" : "⅟16"}</button></div>
-    <div id="degree">${out.join("")}</div>
-    <div class="row"><input id="motifText" class="wide" value="${esc(text)}" title="The motif as text (Enter to preview)"></div>
-    <div class="lbl" style="margin-top:8px">used ${m?.uses.length ?? 0} times</div>
-    <div class="uses">${uses || '<span class="dimmer">not used</span>'}</div>
-    <div class="help">Click an empty cell to add a note, drag it to move it, drag its right end to lengthen it, drag the orange bar to change the motif's length. With a note selected: <kbd>↑</kbd><kbd>↓</kbd> a step, <kbd>Shift</kbd>+<kbd>↑</kbd><kbd>↓</kbd> sharpen or flatten, <kbd>←</kbd><kbd>→</kbd> move, <kbd>Del</kbd> remove, <kbd>A</kbd> accent.</div>`;
-  $("dgGrid").onclick = () => { DG.grid = DG.grid === 0.5 ? 0.25 : 0.5; renderMotifEditor(); };
-  $("motifText").onkeydown = (e) => {
-    if (e.key === "Enter") { change({ kind: "set", target: `motif/${d.name}`, field: "notes", value: e.target.value }); e.target.blur(); }
-    e.stopPropagation();
-  };
-  box.querySelectorAll(".use").forEach((u) => {
-    u.onclick = () => {
-      const tag = form().find((o) => o.section === u.dataset.section)?.tag;
-      if (!tag) return;
-      S.chip = Number(u.dataset.index);
-      S.tag = tag; S.track = u.dataset.track;
-      view();
-    };
-  });
-  wireDegreeGrid(X, Y);
+  $("degree").innerHTML = out.join("");
+  wireDegreeGrid();
 }
 
 function motifChanged() {
   const d = S.draft;
-  change({ kind: "motif", motif: d.name, notes: d.notes, length: d.length });
+  change({ kind: "motif", motif: d.name, notes: d.notes.map((n) => ({ ...n })), length: d.length });
 }
 
-function wireDegreeGrid(X, Y) {
+function wireDegreeGrid() {
   const svg = $("dgSvg");
   const snap = (b) => Math.max(0, Math.round(b / DG.grid) * DG.grid);
   const at = (e) => {
@@ -802,7 +963,7 @@ function wireDegreeGrid(X, Y) {
     S.focus = "motif";
     const d = S.draft;
     const p0 = at(e);
-    let mode, i, orig;
+    let mode, i, orig, created = false;
     if (e.target.classList.contains("lenh")) { mode = "length"; }
     else if (e.target.classList.contains("rh")) { mode = "resize"; i = Number(e.target.dataset.i); }
     else if (e.target.closest("g.dn")) { mode = "move"; i = Number(e.target.closest("g.dn").dataset.i); }
@@ -810,12 +971,12 @@ function wireDegreeGrid(X, Y) {
       if (p0.beat < 0) return;
       const last = S.msel !== null && d.notes[S.msel] ? d.notes[S.msel].d : DG.grid;
       d.notes.push({ step: p0.step, acc: 0, s: Math.floor(p0.beat / DG.grid) * DG.grid, d: last, accent: 0, staccato: false });
-      i = d.notes.length - 1; mode = "resize";
+      i = d.notes.length - 1; mode = "resize"; created = true;
       if (d.notes[i].s + d.notes[i].d > d.length) d.length = d.notes[i].s + d.notes[i].d;
     }
     if (i !== undefined) { S.msel = i; orig = { ...d.notes[i] }; }
     const origLen = d.length;
-    let moved = mode === "resize" && !orig.d ? true : false;
+    S.dragging = true;
     const move = (m) => {
       const p = at(m);
       if (mode === "length") d.length = Math.max(DG.grid, snap(p.beat));
@@ -829,20 +990,20 @@ function wireDegreeGrid(X, Y) {
         n.d = Math.max(DG.grid, snap(p.beat) - n.s || DG.grid);
         if (n.s + n.d > d.length) d.length = n.s + n.d;
       }
-      moved = true;
-      renderMotifEditor();
+      drawGrid();
     };
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      S.dragging = false;
       const n = i !== undefined ? d.notes[i] : null;
       const same = n && orig && n.s === orig.s && n.step === orig.step && n.d === orig.d;
-      if (mode === "length" ? d.length !== origLen : !same || !orig) motifChanged();
-      else renderMotifEditor();
+      if (created || (mode === "length" ? d.length !== origLen : !same)) motifChanged();
+      else drawGrid();
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
-    renderMotifEditor();
+    drawGrid();
   };
 }
 
@@ -862,7 +1023,7 @@ function motifKey(e) {
     n.accent = n.accent > 0 ? 0 : 1;
   } else return false;
   e.preventDefault();
-  renderMotifEditor();
+  drawGrid();
   motifChanged();
   return true;
 }
@@ -881,45 +1042,78 @@ function renderBar() {
     what.push(`<div class="sum">+${S.change.added} −${S.change.removed} notes in ${tags.length ? tags.map(esc).join(", ") : "no section (nothing sounds different)"}</div>`);
   }
   if (!S.pending.length && !S.error) {
-    what.push(`<div class="msg">${esc(S.message) || "Nothing pending. Change a chip, a motif or a chord: the change is drawn before it is kept."}</div>`);
+    what.push(`<div class="msg">${esc(S.message) || "Change a chip, a motif or a chord: it is drawn here first, framed in blue, and only reaches kaiDAW when you keep it."}</div>`);
   }
   $("what").innerHTML = what.join("");
   $("what").querySelectorAll(".x").forEach((x) => {
     x.onclick = () => {
       const [target, field] = x.dataset.key.split("|");
       S.pending = S.pending.filter((p) => !(p.target === target && p.field === field));
-      view();
+      refresh();
     };
   });
   const acts = [];
   if (S.pending.length) {
-    acts.push(`<button class="primary" id="apply" title="Keep it and send it to kaiDAW (Enter)">keep <kbd style="color:#06170b;border-color:#06170b">⏎</kbd></button>`);
-    acts.push(`<button id="discard" title="Drop the pending change (Esc)">drop <kbd>esc</kbd></button>`);
+    acts.push(`<button class="primary" id="apply" title="Send it to kaiDAW (Enter)">keep <kbd style="color:#06170b;border-color:#06170b">⏎</kbd></button>`);
+    acts.push(`<button id="discard" title="Drop the preview (Esc)">drop <kbd>esc</kbd></button>`);
   } else if (S.ab) {
-    acts.push(`<span class="lbl">hear</span><span class="seg"><button id="abBefore" class="${S.ab === "before" ? "on" : ""}">before</button><button id="abAfter" class="${S.ab === "after" ? "on" : ""}">after</button></span><kbd>B</kbd>`);
+    acts.push(`<span class="lbl">kaiDAW plays</span><span class="seg"><button id="abBefore" class="${S.ab === "before" ? "on" : ""}">before</button><button id="abAfter" class="${S.ab === "after" ? "on" : ""}">after</button></span><kbd>B</kbd>`);
   }
   $("actions").innerHTML = acts.join(" ");
-  if ($("apply")) $("apply").onclick = apply;
+  if ($("apply")) $("apply").onclick = keep;
   if ($("discard")) $("discard").onclick = discard;
   if ($("abBefore")) $("abBefore").onclick = () => ab("before");
   if ($("abAfter")) $("abAfter").onclick = () => ab("after");
 }
 
-async function apply() {
+/// Keep what is previewed. Queued behind any preview still being made, so what is
+/// kept is what was last drawn, and gestures made after it wait for it.
+function keep() {
+  if (!S.pending.length && !queue.some((q) => q.kind === "view" && q.change)) return settled();
+  if (!queue.some((q) => q.kind === "apply")) queue.push({ kind: "apply" });
+  return pump();
+}
+async function doKeep() {
   if (!S.pending.length) return;
-  busy(true);
+  if (S.error) return;   // the last thing typed did not read; keeping now would keep the one before it
+  S.phase = "keeping"; S.error = null;
+  renderState(); renderBar();
   try {
     const r = await post("/compose/apply", { pending: S.pending });
-    S.message = r.message; S.pending = []; S.error = null;
-    if (!inKaidaw) S.message += " — open this page from kaiDAW's compose mode to hear it";
-  } catch (e) { S.error = String(e.message || e); }
-  await view();
+    S.stamp = JSON.stringify(r.stamp);
+    S.message = r.message + (inKaidaw ? "" : " — open this page from kaiDAW's compose mode to hear it");
+    S.pending = []; S.before = null;
+    S.phase = "kept";
+  } catch (e) {
+    S.error = String(e.message || e);
+    S.phase = "preview";
+  }
+  await fetchView(null);
+  clearTimeout(S.keptTimer);
+  S.keptTimer = setTimeout(() => { if (S.phase === "kept") { S.phase = "idle"; renderState(); } }, 6000);
 }
-function discard() { S.pending = []; S.error = null; S.message = "Dropped."; syncDraft(); view(); }
-async function ab(side) {
-  busy(true);
-  try { const r = await post("/compose/ab", { side }); S.message = r.message; } catch (e) { S.error = String(e.message || e); }
-  await view();
+function discard() {
+  queue.length = 0; S.epoch++;
+  S.pending = []; S.error = null; S.message = "Dropped: the song is as kept.";
+  S.phase = "idle"; syncDraft(true);
+  refresh();
+}
+/// Flip kaiDAW between the song before and after the last edit kept here.
+function ab(side) {
+  if (queue.some((q) => q.kind === "ab") || S.phase === "keeping") return;
+  S.ab = side;   // at once, so a second press flips back rather than repeating this one
+  renderBar();
+  queue.push({ kind: "ab", side });
+  pump();
+}
+async function doAb(side) {
+  S.phase = "keeping"; renderState();
+  try {
+    const r = await post("/compose/ab", { side });
+    S.message = r.message; S.stamp = JSON.stringify(r.stamp);
+  } catch (e) { S.error = String(e.message || e); }
+  S.phase = "kept";
+  await fetchView(null);
 }
 
 // ------------------------------------------------------------------ transport
@@ -980,17 +1174,19 @@ if (!inKaidaw) $("toArrange").style.display = "none";
 
 document.addEventListener("keydown", (e) => {
   if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (e.key === "\\") { e.preventDefault(); if (!e.repeat) showBefore(true); return; }
   if (e.key === "`") { e.preventDefault(); toKaidaw({ kind: "mode", mode: "arrange" }); return; }
   if (e.code === "Space") { e.preventDefault(); toKaidaw({ kind: "transport", action: "toggle" }); return; }
-  if (e.key === "Enter" && S.pending.length) { e.preventDefault(); apply(); return; }
+  if (e.key === "Enter" && (S.pending.length || pumping)) { e.preventDefault(); keep(); return; }
   if (e.key === "Escape") {
-    if (S.pending.length) discard(); else { S.chip = null; S.msel = null; renderLanes(); renderMotifEditor(); }
+    if (S.pending.length || pumping) discard(); else { S.chip = null; S.msel = null; renderLanes(); drawGrid(); }
     return;
   }
-  if ((e.key === "b" || e.key === "B") && S.ab && !S.pending.length) { ab(S.ab === "after" ? "before" : "after"); return; }
+  if ((e.key === "b" || e.key === "B") && S.ab && !S.pending.length && !e.repeat) { ab(S.ab === "after" ? "before" : "after"); return; }
   if (e.key === "[") { step(-1); return; }
   if (e.key === "]") { step(1); return; }
   if ((e.key === "l" || e.key === "L") && !e.ctrlKey && !e.metaKey) { $("loopBtn").click(); return; }
+  if (S.showBefore) return;
   if (S.focus === "motif" && motifKey(e)) return;
   if (S.focus === "chip" && S.chip !== null) {
     const chips = part(S.track)?.melody?.chips ?? [];
@@ -1005,6 +1201,8 @@ document.addEventListener("keydown", (e) => {
     else if (map[e.key.toLowerCase()]) { e.preventDefault(); chipOp(map[e.key.toLowerCase()]); }
   }
 });
+document.addEventListener("keyup", (e) => { if (e.key === "\\") showBefore(false); });
+window.addEventListener("blur", () => showBefore(false));
 
 // ------------------------------------------------------------------ drawing it all
 
@@ -1015,6 +1213,7 @@ function render() {
   renderLanes();
   renderSide();
   renderBar();
+  renderState();
 }
 let resizeTimer;
 window.addEventListener("resize", () => {
@@ -1023,7 +1222,7 @@ window.addEventListener("resize", () => {
 });
 
 toKaidaw({ kind: "hello" });
-view();
+refresh();
 </script>
 </body>
 </html>

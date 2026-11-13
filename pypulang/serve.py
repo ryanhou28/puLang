@@ -72,6 +72,9 @@ class Companion:
         self.agent = Agent(self.path, on_done=self._agent_done)
         # Compiles for the compose view, by the song file's time and the edits applied
         self._compiled: OrderedDict[tuple[Any, ...], CompileResult] = OrderedDict()
+        self._running: dict[tuple[Any, ...], threading.Event] = {}
+        self._cache_lock = threading.Lock()
+        self._generation = 0  # previews made, so a background compile can tell it is stale
         # The overrides file before and after the last edit applied from the compose view
         self._ab: dict[str, Any] | None = None
 
@@ -282,19 +285,78 @@ class Companion:
     # -- the compose view -----------------------------------------------------------------
 
     def _compile(self, edits: list[Edit], until: str) -> CompileResult:
-        """A compile of the song with these edits, kept while the song file is unchanged."""
+        """
+        A compile of the song with these edits, kept while the song file is unchanged.
+
+        Safe from any thread: a compile already running for the same song, edits and
+        stage is waited for rather than started again, which is how keeping an edit
+        picks up the compile begun in the background while its preview was looked at.
+        """
         stamp = self.path.stat().st_mtime
         names = json.dumps([[e.key, plain(e.value)] for e in edits], default=str)
-        for stage in ("daw", until) if until == "score" else (until,):
-            cached = self._compiled.get((stamp, stage, names))
-            if cached is not None:
-                self._compiled.move_to_end((stamp, stage, names))
-                return cached
-        result = load_song(self.path).compile(until=until, edits=edits)
-        self._compiled[(stamp, until, names)] = result
-        while len(self._compiled) > 10:
-            self._compiled.popitem(last=False)
-        return result
+        stages = ("daw", until) if until == "score" else (until,)
+        while True:
+            with self._cache_lock:
+                for stage in stages:
+                    cached = self._compiled.get((stamp, stage, names))
+                    if cached is not None:
+                        self._compiled.move_to_end((stamp, stage, names))
+                        return cached
+                running = next(
+                    (
+                        self._running[(stamp, s, names)]
+                        for s in stages
+                        if (stamp, s, names) in self._running
+                    ),
+                    None,
+                )
+                if running is None:
+                    mine = threading.Event()
+                    self._running[(stamp, until, names)] = mine
+                    break
+            running.wait()  # then look again: it is cached, or it failed and this one runs
+        try:
+            result = load_song(self.path).compile(until=until, edits=edits)
+            with self._cache_lock:
+                self._compiled[(stamp, until, names)] = result
+                while len(self._compiled) > 10:
+                    self._compiled.popitem(last=False)
+            return result
+        finally:
+            with self._cache_lock:
+                self._running.pop((stamp, until, names), None)
+            mine.set()
+
+    def _quietly(self, edits: list[Edit], until: str) -> None:
+        """Compile ahead of need; whoever needs it later will hear about any error."""
+        try:
+            self._compile(edits, until)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _get_ready(self, pending: list[dict[str, Any]]) -> None:
+        """
+        Compile the song for kaiDAW with these pending edits, in the background, once
+        the page has been still for a moment, so keeping them only has to push.
+        """
+        with self._cache_lock:
+            self._generation += 1
+            generation = self._generation
+        edits = self._with(pending)
+
+        def run() -> None:
+            with self._cache_lock:
+                if generation != self._generation:
+                    return  # another preview came since: that one is what will be kept
+            self._quietly(edits, "daw")
+
+        timer = threading.Timer(1.0, run)
+        timer.daemon = True
+        timer.start()
+
+    def _stamp_now(self) -> list[float]:
+        """What the page compares to notice the song or its overrides changing elsewhere."""
+        return list(self._files_stamp()[:2])
 
     def _saved_edits(self) -> list[Edit]:
         return song_edits(self.state.load_overrides())
@@ -390,6 +452,7 @@ class Companion:
                 "change": change.json(),
                 "ab": self._ab["side"] if self._ab else None,
                 "error": error,
+                "stamp": self._stamp_now(),
             }
             if track:
                 added = change.parts.get((tag, track), ([], []))[0]
@@ -398,6 +461,8 @@ class Companion:
                     view["staff"] = {"svg": staff.svg, "rounded": staff.rounded, "ids": staff.ids}
                 except RuntimeError as problem:
                     view["staff"] = {"error": str(problem)}
+            if pending:
+                self._get_ready(pending)
             return view
 
     def compose_apply(self, pending: list[dict[str, Any]]) -> dict[str, Any]:
@@ -405,7 +470,8 @@ class Companion:
         with self.guard:
             file = self.state.directory / "overrides.json"
             before = file.read_text() if file.exists() else None
-            saved = Snapshot(self._compile(self._saved_edits(), "score"))
+            kept_before = self._saved_edits()
+            saved = Snapshot(self._compile(kept_before, "score"))
             overrides = self.state.load_overrides()
             existing = {e.key: e for e in overrides.edit_list()}
             for p in pending:
@@ -421,7 +487,10 @@ class Companion:
                     overrides.put_edit(edit)
             self.state.save_overrides(overrides)
             self._ab = {"before": before, "after": file.read_text(), "side": "after"}
-            return {"message": f"kept {len(pending)} edit(s)" + self._push_kept()}
+            message = f"kept {len(pending)} edit(s)" + self._push_kept()
+            # The first flip back to before should only have to push, too
+            threading.Thread(target=self._quietly, args=(kept_before, "daw"), daemon=True).start()
+            return {"message": message, "stamp": self._stamp_now()}
 
     def compose_ab(self, side: str) -> dict[str, Any]:
         """Put the song back as it was before the last edit applied here, or after it."""
@@ -435,7 +504,8 @@ class Companion:
             else:
                 file.write_text(text)
             self._ab["side"] = side
-            return {"message": side + self._push_kept()}
+            message = side + self._push_kept()
+            return {"message": message, "stamp": self._stamp_now()}
 
     def _push_kept(self) -> str:
         """Push the song with its kept edits, compiling only when this state is new."""
@@ -885,8 +955,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif url.path == "/compose":
                 self._send(200, self.companion.compose_page())
             elif url.path == "/compose/stamp":
-                stamp = self.companion._files_stamp()[:2]  # the song file and its overrides
-                self._send(200, json.dumps({"stamp": list(stamp)}), "application/json")
+                self._send(
+                    200, json.dumps({"stamp": self.companion._stamp_now()}), "application/json"
+                )
             elif url.path == "/health":
                 self._send(
                     200,
