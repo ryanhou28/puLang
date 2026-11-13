@@ -27,7 +27,7 @@ from pypulang.harmony import chord_symbol
 from pypulang.ir.intent import Key
 from pypulang.motifs import parse_phrase
 
-_LOC_RE = re.compile(r"^([^#/]+)#(\d+)/([^/]+)/(\d+)\+([^/]+)/(\w+)$")
+_LOC_RE = re.compile(r"^([^#/]+)#(\d+)/([^/]+)/(\d+)\+(\d+(?:/\d+)?)/(\w+)$")
 
 
 @dataclass

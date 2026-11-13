@@ -37,6 +37,8 @@ class Song:
     path: Path
     source: Piece | str
     pipeline: dict[str, list[ModulePass]] = field(default_factory=dict)
+    # The builder a .py song made, which knows where in the file each value was set
+    builder: PieceBuilder | None = None
 
     def module_or_piece(self) -> Piece | ModuleOp:
         return parse_ir(self.source) if isinstance(self.source, str) else self.source
@@ -74,17 +76,16 @@ class Song:
         )
 
 
-def _find_piece(namespace: dict[str, Any], path: Path) -> Piece:
+def _find_piece(namespace: dict[str, Any], path: Path) -> Piece | PieceBuilder:
     builders = [
         v for k, v in namespace.items() if isinstance(v, PieceBuilder) and not k.startswith("_")
     ]
     if "song" in namespace and isinstance(namespace["song"], PieceBuilder):
-        return namespace["song"].to_ir()
+        return namespace["song"]
     if len(builders) == 1:
-        return builders[0].to_ir()
+        return builders[0]
     if "song" in namespace and callable(namespace["song"]):
-        built = namespace["song"]()
-        return built.to_ir() if isinstance(built, PieceBuilder) else built
+        return namespace["song"]()
     raise ValueError(
         f"{path}: expected one piece, or a variable or function named `song`. "
         f"Found {len(builders)} pieces."
@@ -96,5 +97,8 @@ def load_song(path: str | Path) -> Song:
     file = Path(path)
     if file.suffix == ".py":
         namespace = runpy.run_path(str(file))
-        return Song(file, _find_piece(namespace, file), namespace.get("pipeline", {}))
+        found = _find_piece(namespace, file)
+        if isinstance(found, PieceBuilder):
+            return Song(file, found.to_ir(), namespace.get("pipeline", {}), found)
+        return Song(file, found, namespace.get("pipeline", {}))
     return Song(file, file.read_text())

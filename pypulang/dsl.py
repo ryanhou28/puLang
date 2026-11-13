@@ -421,7 +421,7 @@ def _origin() -> Origin:
     while frame is not None:
         file = frame.f_code.co_filename
         if not file.startswith(_PACKAGE):
-            frames.append((file, frame.f_lineno))
+            frames.append((os.path.abspath(file), frame.f_lineno))
         frame = frame.f_back
     return tuple(frames)
 

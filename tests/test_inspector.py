@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import urllib.error
 import urllib.request
+from fractions import Fraction
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlencode
 
@@ -20,7 +21,7 @@ from pypulang import lift
 from pypulang.backends.kaidaw import KaidawClient, SongState, pull, push
 from pypulang.compiler.dialects import score
 from pypulang.compiler.edits import Edit
-from pypulang.inspector import Model, voiced_module
+from pypulang.inspector import Model, parse_loc, voiced_module
 from pypulang.lift import daw_notes
 from pypulang.serve import Companion, _Handler
 from pypulang.songfile import load_song
@@ -248,3 +249,9 @@ class TestLift:
         self.hand_edit(client, state, "a#1/lead", nudge)
         _, found = self.suggestions(song_file, state, "a#1/lead")
         assert found == []
+
+
+def test_a_note_off_the_beat_has_a_place():
+    # Half a melody sits between beats; reading its hand edits starts here
+    assert parse_loc("verse#1/trumpet/1+3/2/v0") == ("verse", 1, "trumpet", 1, Fraction(3, 2), "v0")
+    assert parse_loc("verse#2/keys/3+1/v1") == ("verse", 2, "keys", 3, Fraction(1), "v1")

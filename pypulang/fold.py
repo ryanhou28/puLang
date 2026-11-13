@@ -19,8 +19,8 @@ from __future__ import annotations
 import ast
 import difflib
 import json
+import os
 import re
-import runpy
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -72,7 +72,9 @@ def fold(song: str | Path, write: bool = True) -> Folding:
     state = SongState.beside(path)
     overrides = state.load_overrides()
     everything = song_edits(overrides)
-    expected = _fingerprint(path, everything)
+    # Each rewrite is checked against the intent IR, which is all a source change
+    # can reach and twenty times quicker to compile; the result once more in full.
+    expected = _fingerprint(path, everything, "intent")
     if expected is None:
         raise ValueError(f"{path.name} does not compile as it is; fix it before folding")
 
@@ -89,7 +91,7 @@ def fold(song: str | Path, write: bool = True) -> Folding:
             reason = "no call in the song sets it"
             for how, text in _rewrites(edit, result.source, scratch):
                 scratch.write_text(text)
-                if _fingerprint(scratch, rest) == expected:
+                if _fingerprint(scratch, rest, "intent") == expected:
                     result.source = text
                     result.folded.append((edit, how))
                     remaining = rest
@@ -97,6 +99,14 @@ def fold(song: str | Path, write: bool = True) -> Folding:
                 reason = "every rewrite tried also changes something else"
             else:
                 result.kept.append((edit, reason))
+        if result.folded:
+            scratch.write_text(result.source)
+            if _fingerprint(scratch, remaining) != _fingerprint(path, everything):
+                kept = [
+                    (e, "the folded song did not compile the same in full")
+                    for e, _ in result.folded
+                ]
+                result = Folding(original, [], kept + result.kept)
     finally:
         scratch.unlink(missing_ok=True)
 
@@ -121,12 +131,14 @@ def _find(edits: list[Edit], edit: Edit) -> Edit | None:
     return next((e for e in reversed(edits) if e.key == edit.key and e.origin is None), None)
 
 
-def _fingerprint(path: Path, edits: list[Edit]) -> str | None:
+def _fingerprint(path: Path, edits: list[Edit], until: str = "daw") -> str | None:
     """What a song compiles to with some edits, or None if it does not compile."""
     try:
-        result = load_song(path).compile(edits=edits)
+        result = load_song(path).compile(edits=edits, until=until)
     except Exception:
         return None
+    if until == "intent":
+        return str(result.stages["intent"])
     return str(result.stages["event"]) + str(result.daw)
 
 
@@ -160,13 +172,10 @@ def _rewrites(edit: Edit, text: str, scratch: Path) -> Iterator[tuple[str, str]]
 
 
 def _builder(path: Path) -> PieceBuilder:
-    namespace = runpy.run_path(str(path))
-    if isinstance(namespace.get("song"), PieceBuilder):
-        return namespace["song"]
-    builders = [v for k, v in namespace.items() if isinstance(v, PieceBuilder) and k[0] != "_"]
-    if len(builders) != 1:
-        raise ValueError(f"{path}: expected one piece to fold edits into")
-    return builders[0]
+    builder = load_song(path).builder
+    if builder is None:
+        raise ValueError(f"{path}: only a song written in Python can be folded into")
+    return builder
 
 
 def _chart_after(path: Path, edit: Edit) -> str | None:
@@ -187,7 +196,7 @@ class _Song:
 
     def __init__(self, text: str, path: Path, piece: PieceBuilder):
         self.text = text
-        self.path = str(path)
+        self.path = os.path.abspath(path)
         self.piece = piece
         self.tree = ast.parse(text)
         self.lines = text.splitlines(keepends=True)
