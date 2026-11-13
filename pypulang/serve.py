@@ -9,6 +9,10 @@ level can take, and the hand edits made in kaiDAW read as the higher edits they
 might mean. The changes: the edits kept beside the song, the variations to
 pick from, and folding the edits into the song's source.
 
+It also serves the compose view, kaiDAW's full-screen mode for writing above the
+notes: a page at /compose that asks for the song as JSON, previews an edit before
+it is kept, and flips between before and after once it is (see `pypulang.compose`).
+
 An edit is kept in the song's overrides at the level it was made, then the song is
 recompiled and pushed, so kaiDAW shows the result a moment later. Nothing here is
 part of kaiDAW's protocol: kaiDAW passes ids and shows a page, and the music stays
@@ -21,6 +25,7 @@ import html
 import json
 import threading
 import traceback
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -31,7 +36,9 @@ from pypulang.ask import Agent
 from pypulang.backends.kaidaw import KaidawClient, KaidawError, SongState, pull, push
 from pypulang.compiler.edits import Edit, current_value, plain
 from pypulang.compiler.passes.voice_lead import parse_spec
+from pypulang.compiler.pipeline import CompileResult
 from pypulang.compiler.spelling import midi_of, spell
+from pypulang.compose import ADDED, Snapshot, compare, motif_text, phrase_op
 from pypulang.context_patterns import CONTEXT_PATTERNS
 from pypulang.harmony import parse_chart, parse_chord_symbol
 from pypulang.inspector import ClipView, Model, NoteChain
@@ -40,7 +47,7 @@ from pypulang.motifs import parse_motif, parse_phrase
 from pypulang.panel import Lines, agent_html, fold_html, runs_html, song_html
 from pypulang.patterns import PATTERN_REGISTRY
 from pypulang.songfile import load_song
-from pypulang.variations import SOURCE, sites
+from pypulang.variations import SOURCE, sites, song_edits
 
 DEFAULT_LISTEN = 8950
 
@@ -63,6 +70,10 @@ class Companion:
         self._read_at: dict[str, tuple[float, ...]] = {}
         self._folding: tuple[tuple[float, ...], str] | None = None
         self.agent = Agent(self.path, on_done=self._agent_done)
+        # Compiles for the compose view, by the song file's time and the edits applied
+        self._compiled: OrderedDict[tuple[Any, ...], CompileResult] = OrderedDict()
+        # The overrides file before and after the last edit applied from the compose view
+        self._ab: dict[str, Any] | None = None
 
     def _files_stamp(self) -> tuple[float, ...]:
         files = [
@@ -268,6 +279,179 @@ class Companion:
         )
         return slot.pitch_list() if slot is not None else None
 
+    # -- the compose view -----------------------------------------------------------------
+
+    def _compile(self, edits: list[Edit], until: str) -> CompileResult:
+        """A compile of the song with these edits, kept while the song file is unchanged."""
+        stamp = self.path.stat().st_mtime
+        names = json.dumps([[e.key, plain(e.value)] for e in edits], default=str)
+        for stage in ("daw", until) if until == "score" else (until,):
+            cached = self._compiled.get((stamp, stage, names))
+            if cached is not None:
+                self._compiled.move_to_end((stamp, stage, names))
+                return cached
+        result = load_song(self.path).compile(until=until, edits=edits)
+        self._compiled[(stamp, until, names)] = result
+        while len(self._compiled) > 10:
+            self._compiled.popitem(last=False)
+        return result
+
+    def _saved_edits(self) -> list[Edit]:
+        return song_edits(self.state.load_overrides())
+
+    def _with(self, pending: list[dict[str, Any]]) -> list[Edit]:
+        """The song's edits, with pending ones in place of any at the same place."""
+        extra = [Edit("intent", p["target"], p["field"], p["value"]) for p in pending]
+        keys = {e.key for e in extra}
+        return [e for e in self._saved_edits() if e.key not in keys] + extra
+
+    def _resolve(
+        self, change: dict[str, Any], pending: list[dict[str, Any]], now: Snapshot
+    ) -> dict[str, Any]:
+        """A gesture on the page as the edit it makes: a target, a field, a value."""
+        kind = change.get("kind")
+
+        def current(target: str, field: str) -> Any:
+            for p in pending:
+                if (p["target"], p["field"]) == (target, field):
+                    return p["value"]
+            return current_value(now.result.stages["intent"], Edit("intent", target, field, None))[
+                1
+            ]
+
+        if kind == "phrase":
+            target = change["target"]
+            text = current(target, "melody")
+            if not text:
+                raise ValueError(f"{target} plays no melody")
+            value = phrase_op(text, int(change["index"]), change["op"], change.get("arg"))
+            return {"target": target, "field": "melody", "value": value}
+        if kind == "motif":
+            value = motif_text(change["notes"], change["length"])
+            return {"target": f"motif/{change['motif']}", "field": "notes", "value": value}
+        if kind == "set":
+            edit = Edit("intent", change["target"], change["field"], None)
+            value = self._parse(None, edit, str(change["value"]))  # type: ignore[arg-type]
+            return {"target": change["target"], "field": change["field"], "value": value}
+        raise ValueError(f"no change of kind {kind!r}")
+
+    def compose_view(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        The song, one section and one part's staff, with the pending edits applied,
+        and what they change compared with the song as it is kept.
+        """
+        with self.guard:
+            pending = list(body.get("pending") or [])
+            saved = Snapshot(self._compile(self._saved_edits(), "score"))
+            error = None
+            if body.get("change"):
+                try:
+                    made = self._resolve(body["change"], pending, saved)
+                    pending = [
+                        p
+                        for p in pending
+                        if (p["target"], p["field"]) != (made["target"], made["field"])
+                    ]
+                    _, kept = current_value(
+                        saved.result.stages["intent"],
+                        Edit("intent", made["target"], made["field"], None),
+                    )
+                    if made["value"] != kept:
+                        made["was"] = kept
+                        pending.append(made)
+                except (ValueError, KeyError, IndexError) as problem:
+                    error = str(problem)
+            now = saved
+            if pending:
+                try:
+                    now = Snapshot(self._compile(self._with(pending), "score"))
+                except (ValueError, KeyError, IndexError) as problem:
+                    error = str(problem)
+                    if body.get("change"):  # the change just made broke it: go back to before it
+                        pending = list(body.get("pending") or [])
+                        now = (
+                            Snapshot(self._compile(self._with(pending), "score"))
+                            if pending
+                            else saved
+                        )
+                    else:
+                        raise
+            change = compare(saved, now)
+            tag = body.get("tag") or now.occurrences[0].tag
+            if tag not in now.by_tag:
+                tag = now.occurrences[0].tag
+            section = now.section(tag)
+            track = body.get("track") or _first_melody(section)
+            view: dict[str, Any] = {
+                "song": now.song(),
+                "section": section,
+                "track": track,
+                "pending": pending,
+                "change": change.json(),
+                "ab": self._ab["side"] if self._ab else None,
+                "error": error,
+            }
+            if track:
+                added = change.parts.get((tag, track), ([], []))[0]
+                try:
+                    staff = now.staff(tag, track, {n.id: ADDED for n in added})
+                    view["staff"] = {"svg": staff.svg, "rounded": staff.rounded, "ids": staff.ids}
+                except RuntimeError as problem:
+                    view["staff"] = {"error": str(problem)}
+            return view
+
+    def compose_apply(self, pending: list[dict[str, Any]]) -> dict[str, Any]:
+        """Keep the pending edits in the song's overrides and push the result."""
+        with self.guard:
+            file = self.state.directory / "overrides.json"
+            before = file.read_text() if file.exists() else None
+            saved = Snapshot(self._compile(self._saved_edits(), "score"))
+            overrides = self.state.load_overrides()
+            existing = {e.key: e for e in overrides.edit_list()}
+            for p in pending:
+                edit = Edit("intent", p["target"], p["field"], p["value"])
+                edit.base = (
+                    existing[edit.key].base
+                    if edit.key in existing
+                    else current_value(saved.result.stages["intent"], edit)[1]
+                )
+                if edit.value == edit.base:
+                    overrides.drop_edit(edit.key)
+                else:
+                    overrides.put_edit(edit)
+            self.state.save_overrides(overrides)
+            self._ab = {"before": before, "after": file.read_text(), "side": "after"}
+            return {"message": f"kept {len(pending)} edit(s)" + self._push_kept()}
+
+    def compose_ab(self, side: str) -> dict[str, Any]:
+        """Put the song back as it was before the last edit applied here, or after it."""
+        with self.guard:
+            if self._ab is None or side not in ("before", "after"):
+                return {"message": "nothing to compare"}
+            file = self.state.directory / "overrides.json"
+            text = self._ab[side]
+            if text is None:
+                file.unlink(missing_ok=True)
+            else:
+                file.write_text(text)
+            self._ab["side"] = side
+            return {"message": side + self._push_kept()}
+
+    def _push_kept(self) -> str:
+        """Push the song with its kept edits, compiling only when this state is new."""
+        if self.client is None:
+            return " (no kaiDAW connected: run with --port to push)"
+        result = self._compile(self._saved_edits(), "daw")
+        try:
+            report = push(result.daw, self.client, self.state)
+        except KaidawError as error:
+            return f" — push failed: {error}"
+        self._stamp = None
+        return f" — pushed: {report.summary().splitlines()[0]}"
+
+    def compose_page(self) -> str:
+        return (Path(__file__).parent / "web" / "compose.html").read_text()
+
     # -- the page -----------------------------------------------------------------------
 
     def page(self, query: dict[str, str]) -> str:
@@ -334,6 +518,15 @@ class Companion:
             f'<div data-fragment="/fragment/readings?{urlencode({"clip": view.key, "back": back})}">'
             '<p class="dim">Reading the edits made in kaiDAW…</p></div>',
         ]
+
+
+def _first_melody(section: dict[str, Any]) -> str | None:
+    parts = section["parts"]
+    for kind in ("melody", "pattern", "notes"):
+        for part in parts:
+            if part["plays"] == kind and part["notes"] and part["role"] != "rhythm":
+                return part["track"]
+    return parts[0]["track"] if parts else None
 
 
 def _slot_key(slot: Any) -> str:
@@ -689,6 +882,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, self.companion.fold_preview(query.get("back", "/")))
             elif url.path == "/fragment/agent":
                 self._send(200, self.companion.runs(query.get("back", "/")))
+            elif url.path == "/compose":
+                self._send(200, self.companion.compose_page())
+            elif url.path == "/compose/stamp":
+                stamp = self.companion._files_stamp()[:2]  # the song file and its overrides
+                self._send(200, json.dumps({"stamp": list(stamp)}), "application/json")
             elif url.path == "/health":
                 self._send(
                     200,
@@ -700,9 +898,28 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001 — a page that says what broke beats a dead socket
             self._send(500, f"<pre>{_e(traceback.format_exc())}</pre>")
 
+    def _json(self, data: Any, status: int = 200) -> None:
+        self._send(status, json.dumps(data, default=str), "application/json")
+
     def do_POST(self) -> None:
         length = int(self.headers.get("content-length", 0))
-        form = {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode()).items()}
+        raw = self.rfile.read(length).decode()
+        if self.path.startswith("/compose/"):
+            try:
+                body = json.loads(raw or "{}")
+                companion = self.companion
+                if self.path == "/compose/view":
+                    self._json(companion.compose_view(body))
+                elif self.path == "/compose/apply":
+                    self._json(companion.compose_apply(body.get("pending") or []))
+                elif self.path == "/compose/ab":
+                    self._json(companion.compose_ab(body.get("side", "")))
+                else:
+                    self._json({"error": "not found"}, 404)
+            except Exception:  # noqa: BLE001 — the page shows what broke
+                self._json({"error": traceback.format_exc()}, 500)
+            return
+        form = {k: v[0] for k, v in parse_qs(raw).items()}
         back = form.get("back", "/inspect")
         companion = self.companion
         try:

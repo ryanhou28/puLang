@@ -1,0 +1,1029 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose</title>
+<!--
+  The compose view: kaiDAW's full-screen mode for writing above the notes.
+
+  `pulang serve` serves this page and answers it in JSON (pypulang/compose.py).
+  Every gesture here becomes a pending edit of the song's intent, compiled beside
+  the song and compared with it note by note, so the change is drawn before it
+  is kept: on the map (where it reaches), in the piano roll (notes added and
+  taken away) and on the staff. Enter keeps it; Esc drops it; B flips between
+  before and after once it is kept, which with a loop playing is how to hear it.
+
+  Inside kaiDAW the page talks to it with postMessage: kaiDAW sends the transport
+  and the project's revision, and the page asks it to play, stop, loop a section,
+  or switch back to the arrangement. kaiDAW knows nothing of what is drawn here.
+-->
+<style>
+  :root {
+    --bg:#101216; --panel:#181b21; --panel2:#1e222a; --sunk:#0c0e12;
+    --line:#282d38; --line2:#333a48;
+    --ink:#e6e9ef; --dim:#8b93a7; --dimmer:#5f6779;
+    --accent:#5aa9e6; --warm:#e8a13a; --ok:#3fae5a; --bad:#e05c5c; --violet:#a78bfa;
+    --radius:4px;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); overflow:hidden;
+         font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+         display:grid; grid-template-rows:auto 1fr auto; }
+  button, select, input { font:inherit; color:var(--ink); background:var(--panel2);
+         border:1px solid var(--line2); border-radius:var(--radius); padding:2px 7px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.on { background:rgba(90,169,230,.18); border-color:var(--accent); }
+  button.primary { background:var(--ok); border-color:var(--ok); color:#06170b; font-weight:600; }
+  button:disabled { opacity:.4; cursor:default; }
+  input:focus, select:focus { outline:none; border-color:var(--accent); }
+  .dim { color:var(--dim); } .dimmer { color:var(--dimmer); }
+  .lbl { color:var(--dimmer); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+  kbd { font:10px ui-monospace,monospace; color:var(--dim); border:1px solid var(--line2);
+        border-bottom-width:2px; border-radius:3px; padding:0 4px; }
+
+  /* ---------------------------------------------------------------- the map */
+  #map { background:var(--panel); border-bottom:1px solid var(--line); padding:8px 12px 6px; }
+  #mapHead { display:flex; align-items:baseline; gap:12px; margin-bottom:6px; }
+  #mapHead h1 { font-size:14px; margin:0; font-weight:600; }
+  #mapHead .spacer { flex:1; }
+  #blocks { position:relative; height:96px; }
+  .blk { position:absolute; top:0; height:58px; border-radius:var(--radius);
+         border:1px solid rgba(0,0,0,.35); padding:3px 6px; overflow:hidden; cursor:pointer;
+         font-size:11px; line-height:1.3; color:#0d0f13; }
+  .blk b { font-weight:700; }
+  .blk .ch { font-size:9.5px; opacity:.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .blk.derived { background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.18) 0 6px,transparent 6px 12px); }
+  .blk.cur { outline:2px solid #fff; outline-offset:1px; z-index:2; }
+  .blk.reach { box-shadow:0 0 0 2px var(--ok), 0 0 12px rgba(63,174,90,.7); z-index:3; }
+  .blk .badge { position:absolute; right:3px; bottom:2px; background:#06170b; color:#9be3ab;
+                font-size:9.5px; border-radius:3px; padding:0 3px; }
+  .blk .uses { position:absolute; right:4px; top:3px; width:8px; height:8px; border-radius:50%;
+               background:#fff; box-shadow:0 0 0 2px rgba(0,0,0,.4); }
+  #activity { position:absolute; top:62px; left:0; right:0; height:34px; }
+  .act { position:absolute; height:3px; border-radius:1px; }
+  #mapHead .key span { margin-right:10px; }
+  .playhead { position:absolute; top:-2px; bottom:0; width:2px; background:var(--warm);
+              pointer-events:none; z-index:5; display:none; }
+
+  /* ----------------------------------------------------------- the workspace */
+  #work { display:grid; grid-template-columns:1fr 360px; min-height:0; }
+  #main { overflow:auto; padding:10px 14px 30px; min-width:0; }
+  #side { border-left:1px solid var(--line); background:var(--panel); overflow:auto; padding:10px 12px 30px; }
+  .sechead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+  .sechead h2 { margin:0; font-size:18px; font-weight:600; }
+  .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:4px 0; }
+  .row input.wide { flex:1; min-width:200px; }
+  .parts button { font-size:11.5px; padding:1px 7px; }
+  .parts button .r { color:var(--dimmer); font-size:10px; margin-left:3px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:6px; margin:10px 0; }
+  .card > .head { display:flex; align-items:center; gap:8px; padding:5px 10px; border-bottom:1px solid var(--line); }
+  .card > .head .spacer { flex:1; }
+  .paper { background:#f7f5ef; border-radius:0 0 6px 6px; padding:6px 8px; color:#111; min-height:60px; }
+  .paper svg { width:100%; height:auto; display:block; }
+  .paper g.hl, .paper g.hl * { fill:#1f6fb8 !important; stroke:#1f6fb8; }
+  .paper g.note, .paper g.chord { cursor:pointer; }
+  .paper .err { color:#a33; padding:10px; }
+  #lanes { position:relative; user-select:none; }
+  #lanes svg { display:block; }
+  .chipbar { display:flex; gap:4px; flex-wrap:wrap; align-items:center; padding:6px 10px;
+             border-top:1px solid var(--line); background:var(--panel2); }
+  .chipbar .sep { width:1px; align-self:stretch; background:var(--line2); margin:0 3px; }
+  .legend { display:flex; gap:12px; font-size:11px; color:var(--dim); }
+  .legend i { display:inline-block; width:10px; height:8px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+
+  /* ------------------------------------------------------------ the motif side */
+  #side h3 { margin:2px 0 6px; font-size:12px; font-weight:600; }
+  .motif { display:grid; grid-template-columns:auto 1fr auto; gap:2px 8px; align-items:baseline;
+           padding:4px 6px; border-radius:var(--radius); cursor:pointer; border:1px solid transparent; }
+  .motif:hover { border-color:var(--line2); }
+  .motif.on { background:rgba(90,169,230,.12); border-color:var(--accent); }
+  .motif .t { color:var(--dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .motif .n { color:var(--dimmer); font-size:11px; }
+  .motif.edited b::after { content:" •"; color:var(--ok); }
+  #degree { background:var(--sunk); border:1px solid var(--line); border-radius:var(--radius); margin:6px 0; }
+  #degree svg { display:block; cursor:crosshair; }
+  .uses { margin-top:6px; }
+  .use { display:flex; gap:8px; padding:3px 6px; border-radius:var(--radius); cursor:pointer; font-size:12px; }
+  .use:hover { background:var(--panel2); }
+  .use .w { color:var(--dim); min-width:120px; }
+  .help { color:var(--dimmer); font-size:11px; line-height:1.5; margin-top:8px; }
+
+  /* ------------------------------------------------------------- pending bar */
+  #bar { border-top:1px solid var(--line); background:var(--panel); padding:7px 12px;
+         display:flex; align-items:center; gap:10px; min-height:44px; }
+  #bar .what { flex:1; min-width:0; }
+  #bar .p { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+  #bar .p .was { color:var(--dimmer); text-decoration:line-through; }
+  #bar .p .x { cursor:pointer; color:var(--dimmer); margin-left:6px; }
+  #bar .sum { color:#9be3ab; font-size:12px; }
+  #bar .err { color:var(--bad); font-size:12px; white-space:pre-wrap; max-height:60px; overflow:auto; }
+  #bar .msg { color:var(--dim); font-size:12px; }
+  .seg button { border-radius:0; } .seg button:first-child { border-radius:4px 0 0 4px; }
+  .seg button:last-child { border-radius:0 4px 4px 0; margin-left:-1px; }
+  #busy { color:var(--warm); font-size:12px; visibility:hidden; }
+  #busy.on { visibility:visible; }
+</style>
+</head>
+<body>
+<section id="map">
+  <div id="mapHead">
+    <h1 id="title">…</h1>
+    <span class="dim" id="songInfo"></span>
+    <span class="spacer"></span>
+    <span class="dimmer" style="font-size:11px">click a section · double-click to loop it</span>
+    <button id="toArrange" title="Back to the arrangement (`)">arrange <kbd>`</kbd></button>
+  </div>
+  <div id="blocks"><div id="activity"></div><div class="playhead" id="mapHead2"></div></div>
+</section>
+
+<div id="work">
+  <div id="main">
+    <div class="sechead">
+      <h2 id="secName">…</h2>
+      <span class="dim" id="secInfo"></span>
+      <button id="prevSec" title="Previous section ([)">◀</button>
+      <button id="nextSec" title="Next section (])">▶</button>
+      <span style="flex:1"></span>
+      <button id="playBtn" title="Play / stop (Space)">▶ play</button>
+      <button id="loopBtn" title="Loop this section (L)">⟲ loop section</button>
+    </div>
+    <div class="row">
+      <span class="lbl" style="width:52px">chart</span>
+      <input id="chart" class="wide" title="The section's chords, a bar between each | (Enter to preview)">
+    </div>
+    <div class="row parts" id="parts"></div>
+    <div class="row" id="melodyRow">
+      <span class="lbl" style="width:52px">melody</span>
+      <input id="phrase" class="wide" title="Motifs and how each is developed: hook; hook -2; hook vary 2 (Enter to preview)">
+    </div>
+    <div class="row" id="patternRow"><span class="lbl" style="width:52px">pattern</span><span id="pattern" class="dim"></span></div>
+
+    <div class="card">
+      <div class="head">
+        <span class="lbl">staff</span><span id="staffWhat" class="dim"></span>
+        <span class="spacer"></span>
+        <button id="staffBefore" title="Hold to see the staff before the pending change">hold for before</button>
+      </div>
+      <div class="paper" id="staff"></div>
+    </div>
+
+    <div class="card">
+      <div class="head">
+        <span class="lbl">chords · phrase · roll</span>
+        <span class="spacer"></span>
+        <div class="legend">
+          <span><i style="background:var(--accent)"></i>chord tone</span>
+          <span><i style="background:var(--violet)"></i>tension</span>
+          <span><i style="background:var(--warm)"></i>outside the key</span>
+          <span><i style="background:transparent;border:2px solid var(--ok)"></i>added</span>
+          <span><i style="background:transparent;border:1px dashed var(--bad)"></i>taken away</span>
+        </div>
+        <button id="others" title="Show the other parts faintly">others</button>
+      </div>
+      <div id="lanes"></div>
+      <div class="chipbar" id="chipbar"></div>
+    </div>
+  </div>
+
+  <aside id="side">
+    <h3>Motifs <span class="dimmer" style="font-weight:400">a change reaches every use</span></h3>
+    <div id="motifs"></div>
+    <div id="motifEdit"></div>
+  </aside>
+</div>
+
+<section id="bar">
+  <span id="busy">compiling…</span>
+  <div class="what" id="what"></div>
+  <div id="actions"></div>
+</section>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const PPQ = 960;
+const inKaidaw = window.parent !== window;
+const NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+const PALETTE = ["#7fb7e6", "#e6b45a", "#8fd18f", "#e48a8a", "#b9a2ea", "#6fd1c4", "#e99bc9",
+                 "#d6cf6b", "#a7b8cf", "#f0a070", "#9fd0ea", "#c7e08a"];
+
+const S = {
+  song: null, section: null, tag: null, track: null,
+  pending: [], change: null, staff: null, ab: null, error: null, message: "",
+  chip: null, motif: null, draft: null, sel: null, focus: null,
+  others: false, hover: null, transport: null, revision: null, stamp: null,
+};
+let seq = 0;
+
+// ------------------------------------------------------------------ talking
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" },
+                                body: JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+/// Ask for the view with the pending edits and, optionally, one more change.
+async function view(change) {
+  const mine = ++seq;
+  busy(true);
+  try {
+    const r = await post("/compose/view", { pending: S.pending, change, tag: S.tag, track: S.track });
+    if (mine !== seq) return;
+    S.song = r.song; S.section = r.section; S.tag = r.section.tag; S.track = r.track;
+    S.pending = r.pending; S.change = r.change; S.staff = r.staff; S.ab = r.ab;
+    S.error = r.error;
+    if (change) S.message = "";
+    syncDraft();
+    render();
+  } catch (e) {
+    if (mine === seq) { S.error = String(e.message || e); renderBar(); }
+  } finally {
+    if (mine === seq) busy(false);
+  }
+}
+
+function busy(on) { $("busy").classList.toggle("on", on); }
+
+function toKaidaw(msg) { if (inKaidaw) window.parent.postMessage({ kaidaw: true, ...msg }, "*"); }
+
+window.addEventListener("message", (e) => {
+  const d = e.data;
+  if (!d || !d.kaidaw || e.source !== window.parent) return;
+  if (d.type === "transport") {
+    S.transport = { ...d, stamp: performance.now() };
+    renderTransport();
+  } else if (d.type === "revision") {
+    const first = S.revision === null;
+    S.revision = d.revision;
+    if (!first) view();
+  }
+});
+
+// The song file changing under the page (an editor, fold, an agent) redraws it.
+setInterval(async () => {
+  try {
+    const h = await fetch("/compose/stamp").then((r) => r.json());
+    const stamp = JSON.stringify(h.stamp);
+    if (S.stamp !== null && stamp !== S.stamp) view();
+    S.stamp = stamp;
+  } catch { /* the server is restarting */ }
+}, 2000);
+
+// ------------------------------------------------------------------ helpers
+
+const form = () => S.song?.form ?? [];
+const occ = (tag) => form().find((o) => o.tag === tag);
+const part = (name) => S.section?.parts.find((p) => p.track === name);
+const sectionLen = () => S.section.bars * S.section.beatsPerBar;
+const pc = (p) => ((p % 12) + 12) % 12;
+const noteName = (p) => NAMES[pc(p)] + (Math.floor(p / 12) - 1);
+function colorOf(name) {
+  const names = Object.keys(S.song.sections);
+  const base = S.song.sections[name]?.derived ?? name;
+  return PALETTE[Math.max(0, names.indexOf(base)) % PALETTE.length];
+}
+function chordAt(beat) {
+  return S.section.chords.find((c) => c.at <= beat && beat < c.at + c.dur) ?? null;
+}
+function kindOf(note) {
+  const ch = chordAt(note.s);
+  if (ch && ch.tones.includes(pc(note.p))) return "ct";
+  if (S.section.scale.includes(pc(note.p))) return "tn";
+  return "out";
+}
+const KIND = { ct: "var(--accent)", tn: "var(--violet)", out: "var(--warm)" };
+function changedHere(track) {
+  return S.change?.parts?.[S.tag]?.[track] ?? { added: [], removed: [] };
+}
+function degreeLabel(step) {
+  const oct = Math.floor(step / 7), d = ((step % 7) + 7) % 7 + 1;
+  return d + (oct > 0 ? "'".repeat(oct) : ",".repeat(-oct));
+}
+function fmtBeat(b) {
+  const whole = Math.floor(b), frac = b - whole;
+  if (!frac) return String(whole);
+  const den = [2, 3, 4, 6, 8, 12, 16].find((d) => Math.abs(frac * d - Math.round(frac * d)) < 1e-6) ?? 16;
+  return `${whole}+${Math.round(frac * den)}/${den}`;
+}
+
+// ------------------------------------------------------------------ the map
+
+function renderMap() {
+  const song = S.song;
+  $("title").textContent = song.title || "untitled";
+  $("songInfo").textContent = `${song.key} · ${song.tempo} bpm · ${song.meter} · ${form().length} sections`;
+  const total = form().reduce((m, o) => Math.max(m, o.start + o.bars * o.beatsPerBar), 0) || 1;
+  const box = $("blocks");
+  const W = box.clientWidth;
+  const x = (beat) => (beat / total) * W;
+  const reach = new Map();
+  for (const tag of S.change?.tags ?? []) {
+    let a = 0, r = 0;
+    for (const t of Object.values(S.change.parts[tag] ?? {})) { a += t.added.length; r += t.removed.length; }
+    reach.set(tag, `+${a} −${r}`);
+  }
+  const motif = S.song.motifs.find((m) => m.name === (S.hover?.motif ?? S.motif));
+  const usedIn = new Set((motif?.uses ?? []).map((u) => u.section));
+  box.querySelectorAll(".blk").forEach((b) => b.remove());
+  for (const o of form()) {
+    const b = document.createElement("div");
+    const derived = S.song.sections[o.section]?.derived;
+    b.className = "blk" + (derived ? " derived" : "") + (o.tag === S.tag ? " cur" : "") + (reach.has(o.tag) ? " reach" : "");
+    b.style.left = x(o.start) + 1 + "px";
+    b.style.width = Math.max(4, x(o.bars * o.beatsPerBar) - 2) + "px";
+    b.style.background = colorOf(o.section);
+    const count = form().filter((f) => f.section === o.section).length;
+    b.innerHTML = `<b>${esc(o.section)}</b>${count > 1 ? `<span style="opacity:.6"> ${o.number}</span>` : ""}`
+      + `<div class="ch">${esc(o.chords.join(" "))}</div>`
+      + `<div class="ch">${o.bars} bars${o.key !== S.song.key ? " · " + esc(o.key) : ""}${o.tempo !== S.song.tempo ? " · " + o.tempo : ""}</div>`
+      + (reach.has(o.tag) ? `<span class="badge">${reach.get(o.tag)}</span>` : "")
+      + (usedIn.has(o.section) ? `<span class="uses" title="uses ${esc(motif.name)}"></span>` : "");
+    b.title = `${o.tag} · bars ${o.firstBar}–${o.firstBar + o.bars - 1}${derived ? " · made from " + derived : ""}`;
+    b.onclick = () => focusSection(o.tag);
+    b.ondblclick = () => { focusSection(o.tag); loopSection(true); };
+    box.appendChild(b);
+  }
+  // Which parts play where, a thin line each
+  const act = $("activity");
+  act.innerHTML = "";
+  const tracks = song.tracks.filter((t) => t.role !== "rhythm");
+  const rowH = Math.min(4, 34 / Math.max(1, tracks.length));
+  tracks.forEach((t, i) => {
+    for (const o of form()) {
+      const n = song.activity[o.tag]?.[t.name] ?? 0;
+      if (!n) continue;
+      const a = document.createElement("div");
+      a.className = "act";
+      a.style.left = x(o.start) + 1 + "px";
+      a.style.width = Math.max(2, x(o.bars * o.beatsPerBar) - 2) + "px";
+      a.style.top = i * rowH + "px";
+      a.style.height = Math.max(1, rowH - 1) + "px";
+      a.style.background = t.name === S.track ? "var(--ink)" : "var(--dim)";
+      a.style.opacity = Math.min(1, 0.25 + n / (o.bars * 6));
+      a.title = `${t.name} · ${n} notes in ${o.tag}`;
+      act.appendChild(a);
+    }
+  });
+  renderTransport();
+}
+
+// ------------------------------------------------------------------ section
+
+function renderSection() {
+  const sec = S.section;
+  const o = occ(S.tag);
+  const count = form().filter((f) => f.section === sec.section).length;
+  $("secName").textContent = sec.section + (count > 1 ? ` ${sec.number}` : "");
+  const derived = S.song.sections[sec.section]?.derived;
+  $("secInfo").textContent = [
+    count > 1 ? `${sec.number} of ${count}` : null,
+    `bars ${sec.firstBar}–${sec.firstBar + sec.bars - 1}`, sec.key, sec.meter,
+    o ? `${o.tempo} bpm` : null, derived ? `made from ${derived}` : null,
+  ].filter(Boolean).join(" · ");
+  if (document.activeElement !== $("chart")) $("chart").value = sec.chart;
+  $("parts").innerHTML = `<span class="lbl" style="width:52px">parts</span>` + sec.parts.map((p) => {
+    const ch = changedHere(p.track);
+    const moved = ch.added.length + ch.removed.length;
+    return `<button data-track="${esc(p.track)}" class="${p.track === S.track ? "on" : ""}" title="${esc(p.plays)}${p.melody ? ": " + esc(p.melody.text) : p.pattern ? ": " + esc(p.pattern) : ""}">${esc(p.track)}<span class="r">${p.plays === "melody" ? "♪" : p.role === "rhythm" ? "◦" : ""}</span>${moved ? `<span class="r" style="color:#9be3ab">+${ch.added.length}−${ch.removed.length}</span>` : ""}</button>`;
+  }).join("");
+  const cur = part(S.track);
+  $("melodyRow").style.display = cur?.melody ? "" : "none";
+  $("patternRow").style.display = cur?.pattern ? "" : "none";
+  if (cur?.melody && document.activeElement !== $("phrase")) $("phrase").value = cur.melody.text;
+  if (cur?.pattern) $("pattern").textContent = cur.pattern;
+  $("loopBtn").style.display = $("playBtn").style.display = inKaidaw ? "" : "none";
+}
+
+$("parts").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-track]");
+  if (!b) return;
+  S.track = b.dataset.track; S.chip = null;
+  view();
+});
+$("chart").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); change({ kind: "set", target: `${S.section.section}/harmony`, field: "chart", value: e.target.value }); e.target.blur(); }
+  if (e.key === "Escape") { e.target.value = S.section.chart; e.target.blur(); }
+});
+$("phrase").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); change({ kind: "set", target: `${S.section.section}/${S.track}`, field: "melody", value: e.target.value }); e.target.blur(); }
+  if (e.key === "Escape") { e.target.value = part(S.track)?.melody?.text ?? ""; e.target.blur(); }
+});
+$("prevSec").onclick = () => step(-1);
+$("nextSec").onclick = () => step(1);
+function step(d) {
+  const i = form().findIndex((o) => o.tag === S.tag);
+  const next = form()[i + d];
+  if (next) focusSection(next.tag);
+}
+function focusSection(tag, track) {
+  S.tag = tag; S.chip = null;
+  if (track) S.track = track;
+  else {
+    const name = occ(tag)?.section;
+    const sec = S.song.sections[name];
+    if (sec && S.song.activity[tag] && !S.song.activity[tag][S.track]) S.track = null;
+  }
+  view();
+}
+
+// ------------------------------------------------------------------ staff
+
+function renderStaff(staff) {
+  const st = staff ?? S.staff;
+  const box = $("staff");
+  const cur = part(S.track);
+  $("staffWhat").textContent = S.track ? `${S.track} · ${S.section.section}` : "";
+  if (!S.track || !st) { box.innerHTML = `<div class="err">Pick a part to see it on a staff.</div>`; return; }
+  if (cur?.role === "rhythm") { box.innerHTML = `<div class="err">Drum parts are not drawn on a staff yet.</div>`; return; }
+  if (st.error) { box.innerHTML = `<div class="err">${esc(st.error)}</div>`; return; }
+  box.innerHTML = st.svg + (st.rounded ? `<div class="dimmer" style="font-size:11px">${st.rounded} notes drawn rounded to the nearest sixteenth (triplets are not drawn yet)</div>` : "");
+  S.svgIds = st.ids ?? {};
+  S.locToSvg = Object.fromEntries(Object.entries(S.svgIds).map(([k, v]) => [v, k]));
+  applyHighlight();
+}
+$("staff").addEventListener("click", (e) => {
+  const g = e.target.closest("g.note");
+  const loc = g && S.svgIds?.[g.id];
+  if (!loc) return;
+  const note = part(S.track)?.notes.find((n) => n.id === loc);
+  if (note) selectNote(note);
+});
+$("staff").addEventListener("mouseover", (e) => {
+  const g = e.target.closest("g.note");
+  const loc = g && S.svgIds?.[g.id];
+  const note = loc && part(S.track)?.notes.find((n) => n.id === loc);
+  S.hover = note ? { notes: new Set([loc]) } : null;
+  applyHighlight();
+});
+const before = $("staffBefore");
+before.onmousedown = async () => {
+  if (!S.pending.length) return;
+  before.classList.add("on");
+  const r = await post("/compose/view", { pending: [], tag: S.tag, track: S.track });
+  if (before.classList.contains("on")) renderStaff(r.staff);
+};
+const release = () => { if (before.classList.contains("on")) { before.classList.remove("on"); renderStaff(); } };
+before.onmouseup = release; before.onmouseleave = release;
+
+// ------------------------------------------------------------------ lanes: chords, chips, roll
+
+const GUT = 56;          // the left gutter, for row labels
+const LANE_CHORD = 24, LANE_CHIP = 26;
+
+function renderLanes() {
+  const box = $("lanes");
+  const W = Math.max(400, box.clientWidth);
+  const len = sectionLen();
+  const bw = (W - GUT - 8) / len;
+  const X = (b) => GUT + b * bw;
+  const cur = part(S.track);
+  const ch = changedHere(S.track);
+  const mine = cur?.notes ?? [];
+  const pitched = S.section.parts.filter((p) => p.role !== "rhythm" && p.track !== S.track);
+  const others = S.others ? pitched.flatMap((p) => p.notes.map((n) => ({ ...n, track: p.track }))) : [];
+  const ps = [...mine, ...ch.removed].map((n) => n.p);
+  let lo = ps.length ? Math.min(...ps) - 3 : 55, hi = ps.length ? Math.max(...ps) + 3 : 79;
+  if (hi - lo < 18) { const mid = (hi + lo) / 2; lo = Math.floor(mid - 9); hi = Math.ceil(mid + 9); }
+  const rh = Math.max(7, Math.min(14, 300 / (hi - lo + 1)));
+  const rollTop = LANE_CHORD + LANE_CHIP + 6;
+  const H = rollTop + (hi - lo + 1) * rh + 4;
+  const Y = (p) => rollTop + (hi - p) * rh;
+  const out = [];
+  out.push(`<svg width="${W}" height="${H}" id="laneSvg">`);
+  // Rows: in-key rows lighter, C labelled
+  for (let p = lo; p <= hi; p++) {
+    const inKey = S.section.scale.includes(pc(p));
+    out.push(`<rect x="${GUT}" y="${Y(p)}" width="${W - GUT}" height="${rh}" fill="${inKey ? "#161a21" : "#111318"}"/>`);
+    if (pc(p) === 0 || p === lo + 1) out.push(`<text x="${GUT - 6}" y="${Y(p) + rh - 2}" font-size="9.5" fill="#5f6779" text-anchor="end">${noteName(p)}</text>`);
+  }
+  // Beats and bars
+  for (let b = 0; b <= len; b++) {
+    const bar = b % S.section.beatsPerBar === 0;
+    out.push(`<line x1="${X(b)}" x2="${X(b)}" y1="${bar ? 0 : rollTop}" y2="${H}" stroke="${bar ? "#333a48" : "#1f232b"}"/>`);
+    if (bar && b < len) out.push(`<text x="${X(b) + 3}" y="${rollTop + 10}" font-size="9" fill="#5f6779">${S.section.firstBar + b / S.section.beatsPerBar}</text>`);
+  }
+  // Chord lane
+  for (const c of S.section.chords) {
+    const editable = S.section.chordStarts.includes(c.position);
+    out.push(`<g class="chordbox" data-pos="${esc(c.position)}" style="cursor:${editable ? "text" : "default"}">`
+      + `<rect x="${X(c.at) + 1}" y="2" width="${Math.max(4, c.dur * bw - 2)}" height="${LANE_CHORD - 4}" rx="3" fill="#1e222a" stroke="#333a48"/>`
+      + `<text x="${X(c.at) + 6}" y="${LANE_CHORD - 8}" font-size="12" fill="#e6e9ef">${esc(c.symbol)}</text></g>`);
+  }
+  // Chips: the melody's placements
+  if (cur?.melody) {
+    for (const c of cur.melody.chips) {
+      const sel = S.chip === c.index;
+      const w = Math.max(6, c.length * bw - 2);
+      const fill = c.motif ? (sel ? "rgba(90,169,230,.35)" : "rgba(90,169,230,.12)") : "transparent";
+      out.push(`<g class="chip" data-index="${c.index}" style="cursor:pointer">`
+        + `<rect x="${X(c.start) + 1}" y="${LANE_CHORD + 1}" width="${w}" height="${LANE_CHIP - 4}" rx="4" fill="${fill}" stroke="${sel ? "var(--accent)" : c.motif ? "#3b5d7c" : "#333a48"}" ${c.motif ? "" : 'stroke-dasharray="3 3"'}/>`
+        + `<text x="${X(c.start) + 7}" y="${LANE_CHORD + LANE_CHIP - 9}" font-size="11.5" fill="${c.motif ? "#cfe3f5" : "#5f6779"}">${esc(c.text)}</text></g>`);
+    }
+  } else {
+    out.push(`<text x="${GUT}" y="${LANE_CHORD + LANE_CHIP - 9}" font-size="11" fill="#5f6779">${cur ? (cur.plays === "pattern" ? "plays a pattern: " + esc(cur.pattern) : "written notes") : ""}</text>`);
+  }
+  // The other parts, faint
+  for (const n of others) {
+    if (n.p < lo || n.p > hi) continue;
+    out.push(`<rect x="${X(n.s)}" y="${Y(n.p) + 1}" width="${Math.max(2, n.d * bw - 1)}" height="${rh - 2}" fill="#8b93a7" opacity=".18"><title>${esc(n.track)} ${noteName(n.p)}</title></rect>`);
+  }
+  // Taken away: dashed ghosts
+  for (const n of ch.removed) {
+    out.push(`<rect x="${X(n.s) + .5}" y="${Y(n.p) + 1.5}" width="${Math.max(2, n.d * bw - 2)}" height="${rh - 3}" fill="none" stroke="var(--bad)" stroke-dasharray="3 2" rx="2"/>`);
+  }
+  // This part's notes
+  const added = new Set(ch.added.map((n) => n.id));
+  for (const n of mine) {
+    const k = kindOf(n);
+    const add = added.has(n.id);
+    const sel = S.sel === n.id;
+    out.push(`<rect class="nt" data-id="${esc(n.id)}" x="${X(n.s) + .5}" y="${Y(n.p) + 1}" width="${Math.max(2, n.d * bw - 1.5)}" height="${rh - 2}" rx="2" fill="${KIND[k]}" opacity="${0.55 + (n.v / 127) * 0.45}" stroke="${add ? "var(--ok)" : sel ? "#fff" : "none"}" stroke-width="${add ? 2 : 1.5}" style="cursor:pointer"><title>${noteName(n.p)} · beat ${fmtBeat(n.s)} · ${k === "ct" ? "chord tone" : k === "tn" ? "tension" : "outside the key"}${add ? " · added" : ""}</title></rect>`);
+  }
+  out.push(`<line id="rollHead" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--warm)" stroke-width="2" style="display:none"/>`);
+  out.push(`</svg>`);
+  box.innerHTML = out.join("");
+  S.laneX = { X, bw, len };
+  applyHighlight();
+  renderChipbar();
+  renderTransport();
+}
+
+$("lanes").addEventListener("click", (e) => {
+  const chip = e.target.closest("g.chip");
+  if (chip) { selectChip(Number(chip.dataset.index)); return; }
+  const nt = e.target.closest("rect.nt");
+  if (nt) { const n = part(S.track)?.notes.find((x) => x.id === nt.dataset.id); if (n) selectNote(n); return; }
+  const cb = e.target.closest("g.chordbox");
+  if (cb && S.section.chordStarts.includes(cb.dataset.pos)) editChord(cb.dataset.pos);
+});
+$("lanes").addEventListener("mouseover", (e) => {
+  const chip = e.target.closest("g.chip");
+  const nt = e.target.closest("rect.nt");
+  if (chip) S.hover = { chip: Number(chip.dataset.index) };
+  else if (nt) S.hover = { notes: new Set([nt.dataset.id]) };
+  else S.hover = null;
+  applyHighlight();
+});
+$("others").onclick = () => { S.others = !S.others; $("others").classList.toggle("on", S.others); renderLanes(); };
+
+function chipNotes(index) {
+  const cur = part(S.track);
+  const c = cur?.melody?.chips.find((x) => x.index === index);
+  if (!c) return new Set();
+  return new Set(cur.notes.filter((n) => n.s >= c.start - 1e-9 && n.s < c.start + c.length - 1e-9).map((n) => n.id));
+}
+
+/// Light up the notes under the hovered or selected chip, in the roll and on the staff.
+function applyHighlight() {
+  let ids = new Set();
+  if (S.hover?.notes) ids = S.hover.notes;
+  else if (S.hover?.chip !== undefined) ids = chipNotes(S.hover.chip);
+  else if (S.chip !== null) ids = chipNotes(S.chip);
+  document.querySelectorAll("#lanes rect.nt").forEach((r) => {
+    r.style.filter = ids.has(r.dataset.id) ? "brightness(1.5) drop-shadow(0 0 3px #fff)" : "";
+  });
+  document.querySelectorAll("#staff g.hl").forEach((g) => g.classList.remove("hl"));
+  for (const id of ids) {
+    const svgId = S.locToSvg?.[id];
+    const g = svgId && document.getElementById(svgId);
+    if (g) g.classList.add("hl");
+  }
+}
+
+function selectNote(n) {
+  S.sel = n.id;
+  const chips = part(S.track)?.melody?.chips ?? [];
+  const c = chips.find((x) => n.s >= x.start && n.s < x.start + x.length);
+  S.chip = c ? c.index : S.chip;
+  S.focus = "chip";
+  renderLanes();
+}
+
+function selectChip(index) {
+  S.chip = index; S.focus = "chip"; S.sel = null;
+  const c = part(S.track)?.melody?.chips.find((x) => x.index === index);
+  if (c?.motif) { S.motif = c.motif; syncDraft(); renderSide(); }
+  renderLanes();
+}
+
+function editChord(position) {
+  const c = S.section.chords.find((x) => x.position === position);
+  const { X, bw } = S.laneX;
+  const input = document.createElement("input");
+  input.value = c.symbol;
+  Object.assign(input.style, { position: "absolute", left: X(c.at) + 1 + "px", top: "1px",
+                                width: Math.max(80, c.dur * bw - 2) + "px", zIndex: 4 });
+  $("lanes").appendChild(input);
+  input.focus(); input.select();
+  let finished = false;
+  const done = (keep) => {
+    if (finished) return;
+    finished = true;
+    input.remove();
+    if (keep && input.value.trim() && input.value.trim() !== c.symbol) {
+      change({ kind: "set", target: `${S.section.section}/harmony@${position}`, field: "chord", value: input.value.trim() });
+    }
+  };
+  input.onkeydown = (e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); e.stopPropagation(); };
+  input.onblur = () => done(false);
+}
+
+// The gestures a selected chip offers
+function renderChipbar() {
+  const bar = $("chipbar");
+  const cur = part(S.track);
+  const c = cur?.melody?.chips.find((x) => x.index === S.chip);
+  if (!c) {
+    bar.innerHTML = cur?.melody
+      ? `<span class="dimmer">Click a chip, or a note, to change that statement of its motif. Hover one to see its notes.</span>`
+      : `<span class="dimmer">${cur ? "Only melodies are drawn as chips so far; patterns are changed in the source tab." : ""}</span>`;
+    return;
+  }
+  const motifs = S.song.motifs.map((m) => `<option ${m.name === c.motif ? "selected" : ""}>${esc(m.name)}</option>`).join("");
+  bar.innerHTML = c.motif ? `
+    <b style="margin-right:4px">${esc(c.text)}</b>
+    <button data-op="up" title="One scale step up (↑)">↑ step</button>
+    <button data-op="down" title="One scale step down (↓)">↓ step</button>
+    <button data-op="octave_up" title="An octave up (Shift+↑)">8va</button>
+    <button data-op="octave_down" title="An octave down (Shift+↓)">8vb</button>
+    <span class="sep"></span>
+    <button data-op="inv" title="Invert it (I)">inv</button>
+    <button data-op="rev" title="Play it backwards (R)">rev</button>
+    <button data-op="vary" title="Ornament it, or ornament it another way (V)">vary</button>
+    <button data-op="plain" title="Take every development off (P)">plain</button>
+    <span class="sep"></span>
+    <select id="chipMotif" title="Use another motif here">${motifs}</select>
+    <span class="dimmer">first</span><input id="chipFirst" size="2" title="Keep only its first n notes (Enter)">
+    <span class="dimmer">end on</span><input id="chipEnd" size="2" title="End on this degree (Enter)">
+    <span class="sep"></span>
+    <button data-op="left" title="Swap with the one before (Alt+←)">←</button>
+    <button data-op="right" title="Swap with the one after (Alt+→)">→</button>
+    <select id="chipInsert" title="Put another statement after this one"><option value="">+ after…</option>${S.song.motifs.map((m) => `<option>${esc(m.name)}</option>`).join("")}<option value="rest 1">rest 1 bar</option><option value="rest 2">rest 2 beats</option></select>
+    <button data-op="delete" title="Take it out (Delete)">✕</button>`
+    : `<b>${esc(c.text)}</b> <button data-op="delete">✕</button>
+       <select id="chipInsert"><option value="">+ after…</option>${S.song.motifs.map((m) => `<option>${esc(m.name)}</option>`).join("")}</select>`;
+  bar.querySelectorAll("button[data-op]").forEach((b) => { b.onclick = () => chipOp(b.dataset.op); });
+  const m = $("chipMotif"); if (m) m.onchange = () => chipOp("motif", m.value);
+  const f = $("chipFirst"); if (f) f.onkeydown = (e) => { if (e.key === "Enter") chipOp("first", f.value.trim()); e.stopPropagation(); };
+  const en = $("chipEnd"); if (en) en.onkeydown = (e) => { if (e.key === "Enter") chipOp("end", en.value.trim()); e.stopPropagation(); };
+  const ins = $("chipInsert"); if (ins) ins.onchange = () => { if (ins.value) chipOp("insert", ins.value); };
+}
+
+function chipOp(op, arg) {
+  if (S.chip === null) return;
+  const index = S.chip;
+  if (op === "left" && index > 0) S.chip = index - 1;
+  if (op === "right") S.chip = index + 1;
+  if (op === "insert") S.chip = index + 1;
+  if (op === "delete") S.chip = null;
+  change({ kind: "phrase", target: `${S.section.section}/${S.track}`, index, op, arg: arg ?? null });
+}
+
+function change(c) { view(c); }
+
+// ------------------------------------------------------------------ motifs
+
+function syncDraft() {
+  if (!S.song) return;
+  if (!S.motif && S.song.motifs.length) {
+    const chip = part(S.track)?.melody?.chips.find((c) => c.motif);
+    S.motif = chip?.motif ?? S.song.motifs[0].name;
+  }
+  const m = S.song.motifs.find((x) => x.name === S.motif);
+  S.draft = m ? { name: m.name, notes: m.notes.map((n) => ({ ...n })), length: m.length } : null;
+}
+
+function renderSide() {
+  const edited = new Set(S.pending.filter((p) => p.target.startsWith("motif/")).map((p) => p.target.slice(6)));
+  $("motifs").innerHTML = S.song.motifs.map((m) => `
+    <div class="motif ${m.name === S.motif ? "on" : ""} ${edited.has(m.name) ? "edited" : ""}" data-name="${esc(m.name)}" title="${esc(m.text)}">
+      <b>${esc(m.name)}</b><span class="t">${esc(m.text)}</span><span class="n">${m.uses.length} use${m.uses.length === 1 ? "" : "s"}</span>
+    </div>`).join("") || `<p class="dimmer">This song has no motifs. Define one with song.motif().</p>`;
+  renderMotifEditor();
+}
+
+$("motifs").addEventListener("click", (e) => {
+  const row = e.target.closest(".motif");
+  if (!row) return;
+  S.motif = row.dataset.name; S.focus = "motif"; S.msel = null;
+  syncDraft(); renderSide(); renderMap();
+});
+$("motifs").addEventListener("mouseover", (e) => {
+  const row = e.target.closest(".motif");
+  const name = row?.dataset.name ?? null;
+  if ((S.hover?.motif ?? null) !== name) { S.hover = name ? { motif: name } : null; renderMap(); }
+});
+$("motifs").addEventListener("mouseleave", () => { S.hover = null; renderMap(); });
+
+// The degree grid: rows are the key's scale steps, so a note is a degree before it is a pitch.
+const DG = { colW: 0, rowH: 15, lo: 0, hi: 0, grid: 0.5, left: 34 };
+function renderMotifEditor() {
+  const box = $("motifEdit");
+  const d = S.draft;
+  if (!d) { box.innerHTML = ""; return; }
+  const m = S.song.motifs.find((x) => x.name === d.name);
+  const steps = d.notes.map((n) => n.step);
+  DG.lo = Math.min(-3, ...steps) - 2; DG.hi = Math.max(8, ...steps) + 2;
+  const W = 330, cols = Math.max(1, Math.round(d.length / DG.grid));
+  DG.colW = (W - DG.left - 10) / Math.max(cols, 8 / DG.grid);
+  const rows = DG.hi - DG.lo + 1, H = rows * DG.rowH + 18;
+  const X = (b) => DG.left + (b / DG.grid) * DG.colW, Y = (s) => 4 + (DG.hi - s) * DG.rowH;
+  const out = [`<svg width="${W}" height="${H}" id="dgSvg">`];
+  for (let s = DG.lo; s <= DG.hi; s++) {
+    const tonic = ((s % 7) + 7) % 7 === 0;
+    out.push(`<rect x="${DG.left}" y="${Y(s)}" width="${W - DG.left}" height="${DG.rowH}" fill="${tonic ? "#1a2230" : s % 2 ? "#13161c" : "#111318"}"/>`);
+    out.push(`<text x="${DG.left - 5}" y="${Y(s) + DG.rowH - 4}" font-size="10" fill="${tonic ? "#8b93a7" : "#5f6779"}" text-anchor="end">${degreeLabel(s)}</text>`);
+  }
+  const maxB = Math.max(d.length, 8);
+  for (let b = 0; b <= maxB / DG.grid; b++) {
+    const beat = b * DG.grid;
+    const strong = beat % 4 === 0, onBeat = beat % 1 === 0;
+    out.push(`<line x1="${X(beat)}" x2="${X(beat)}" y1="4" y2="${H - 14}" stroke="${strong ? "#3a4252" : onBeat ? "#262b35" : "#181b21"}"/>`);
+  }
+  out.push(`<rect x="${X(d.length)}" y="4" width="${Math.max(0, W - X(d.length))}" height="${H - 18}" fill="#000" opacity=".35"/>`);
+  out.push(`<rect class="lenh" x="${X(d.length) - 3}" y="4" width="6" height="${H - 18}" fill="var(--warm)" opacity=".7" style="cursor:ew-resize"><title>The motif's length: drag</title></rect>`);
+  d.notes.forEach((n, i) => {
+    const sel = S.msel === i;
+    const acc = n.acc > 0 ? "♯" : n.acc < 0 ? "♭" : "";
+    out.push(`<g class="dn" data-i="${i}" style="cursor:move"><rect x="${X(n.s) + 1}" y="${Y(n.step) + 1}" width="${Math.max(4, (n.d / DG.grid) * DG.colW - 2)}" height="${DG.rowH - 2}" rx="3" fill="${n.acc ? "var(--warm)" : "var(--accent)"}" stroke="${sel ? "#fff" : "none"}" stroke-width="1.5"/>`
+      + `<text x="${X(n.s) + 4}" y="${Y(n.step) + DG.rowH - 4}" font-size="9.5" fill="#0d0f13">${acc}${degreeLabel(n.step)}${n.accent > 0 ? ">" : ""}</text>`
+      + `<rect class="rh" data-i="${i}" x="${X(n.s + n.d) - 5}" y="${Y(n.step) + 1}" width="5" height="${DG.rowH - 2}" fill="transparent" style="cursor:ew-resize"/></g>`);
+  });
+  out.push(`<text x="${DG.left}" y="${H - 3}" font-size="10" fill="#5f6779">${d.length} beats · grid ${DG.grid === 0.5 ? "⅛" : "⅟16"}</text></svg>`);
+  const uses = (m?.uses ?? []).map((u) => `<div class="use" data-section="${esc(u.section)}" data-track="${esc(u.track)}" data-index="${u.index}"><span class="w">${esc(u.section)} · ${esc(u.track)}</span><span>${esc(u.text)}</span></div>`).join("");
+  const text = S.pending.find((p) => p.target === `motif/${d.name}`)?.value ?? m?.text ?? "";
+  box.innerHTML = `
+    <div class="row" style="margin-top:12px"><b>${esc(d.name)}</b><span class="dimmer">in degrees of the key</span><span style="flex:1"></span>
+      <button id="dgGrid" title="Grid: eighths or sixteenths">${DG.grid === 0.5 ? "⅛" : "⅟16"}</button></div>
+    <div id="degree">${out.join("")}</div>
+    <div class="row"><input id="motifText" class="wide" value="${esc(text)}" title="The motif as text (Enter to preview)"></div>
+    <div class="lbl" style="margin-top:8px">used ${m?.uses.length ?? 0} times</div>
+    <div class="uses">${uses || '<span class="dimmer">not used</span>'}</div>
+    <div class="help">Click an empty cell to add a note, drag it to move it, drag its right end to lengthen it, drag the orange bar to change the motif's length. With a note selected: <kbd>↑</kbd><kbd>↓</kbd> a step, <kbd>Shift</kbd>+<kbd>↑</kbd><kbd>↓</kbd> sharpen or flatten, <kbd>←</kbd><kbd>→</kbd> move, <kbd>Del</kbd> remove, <kbd>A</kbd> accent.</div>`;
+  $("dgGrid").onclick = () => { DG.grid = DG.grid === 0.5 ? 0.25 : 0.5; renderMotifEditor(); };
+  $("motifText").onkeydown = (e) => {
+    if (e.key === "Enter") { change({ kind: "set", target: `motif/${d.name}`, field: "notes", value: e.target.value }); e.target.blur(); }
+    e.stopPropagation();
+  };
+  box.querySelectorAll(".use").forEach((u) => {
+    u.onclick = () => {
+      const tag = form().find((o) => o.section === u.dataset.section)?.tag;
+      if (!tag) return;
+      S.chip = Number(u.dataset.index);
+      S.tag = tag; S.track = u.dataset.track;
+      view();
+    };
+  });
+  wireDegreeGrid(X, Y);
+}
+
+function motifChanged() {
+  const d = S.draft;
+  change({ kind: "motif", motif: d.name, notes: d.notes, length: d.length });
+}
+
+function wireDegreeGrid(X, Y) {
+  const svg = $("dgSvg");
+  const snap = (b) => Math.max(0, Math.round(b / DG.grid) * DG.grid);
+  const at = (e) => {
+    const r = svg.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    return { beat: ((x - DG.left) / DG.colW) * DG.grid, step: DG.hi - Math.floor((y - 4) / DG.rowH) };
+  };
+  svg.onmousedown = (e) => {
+    e.preventDefault();
+    S.focus = "motif";
+    const d = S.draft;
+    const p0 = at(e);
+    let mode, i, orig;
+    if (e.target.classList.contains("lenh")) { mode = "length"; }
+    else if (e.target.classList.contains("rh")) { mode = "resize"; i = Number(e.target.dataset.i); }
+    else if (e.target.closest("g.dn")) { mode = "move"; i = Number(e.target.closest("g.dn").dataset.i); }
+    else {
+      if (p0.beat < 0) return;
+      const last = S.msel !== null && d.notes[S.msel] ? d.notes[S.msel].d : DG.grid;
+      d.notes.push({ step: p0.step, acc: 0, s: Math.floor(p0.beat / DG.grid) * DG.grid, d: last, accent: 0, staccato: false });
+      i = d.notes.length - 1; mode = "resize";
+      if (d.notes[i].s + d.notes[i].d > d.length) d.length = d.notes[i].s + d.notes[i].d;
+    }
+    if (i !== undefined) { S.msel = i; orig = { ...d.notes[i] }; }
+    const origLen = d.length;
+    let moved = mode === "resize" && !orig.d ? true : false;
+    const move = (m) => {
+      const p = at(m);
+      if (mode === "length") d.length = Math.max(DG.grid, snap(p.beat));
+      if (mode === "move") {
+        const n = d.notes[i];
+        n.s = Math.max(0, snap(orig.s + (p.beat - p0.beat)));
+        n.step = orig.step + (p.step - p0.step);
+      }
+      if (mode === "resize") {
+        const n = d.notes[i];
+        n.d = Math.max(DG.grid, snap(p.beat) - n.s || DG.grid);
+        if (n.s + n.d > d.length) d.length = n.s + n.d;
+      }
+      moved = true;
+      renderMotifEditor();
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      const n = i !== undefined ? d.notes[i] : null;
+      const same = n && orig && n.s === orig.s && n.step === orig.step && n.d === orig.d;
+      if (mode === "length" ? d.length !== origLen : !same || !orig) motifChanged();
+      else renderMotifEditor();
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    renderMotifEditor();
+  };
+}
+
+function motifKey(e) {
+  const d = S.draft;
+  const n = S.msel !== null ? d?.notes[S.msel] : null;
+  if (!n) return false;
+  const k = e.key;
+  if (k === "ArrowUp" || k === "ArrowDown") {
+    const dir = k === "ArrowUp" ? 1 : -1;
+    if (e.shiftKey) n.acc = Math.max(-1, Math.min(1, n.acc + dir)); else n.step += dir;
+  } else if (k === "ArrowLeft" || k === "ArrowRight") {
+    n.s = Math.max(0, n.s + (k === "ArrowRight" ? DG.grid : -DG.grid));
+  } else if (k === "Delete" || k === "Backspace") {
+    d.notes.splice(S.msel, 1); S.msel = null;
+  } else if (k === "a" || k === "A") {
+    n.accent = n.accent > 0 ? 0 : 1;
+  } else return false;
+  e.preventDefault();
+  renderMotifEditor();
+  motifChanged();
+  return true;
+}
+
+// ------------------------------------------------------------------ the pending bar
+
+function renderBar() {
+  const what = [];
+  if (S.error) what.push(`<div class="err">${esc(S.error)}</div>`);
+  for (const p of S.pending) {
+    const was = p.was === null || p.was === undefined ? "" : (typeof p.was === "object" ? JSON.stringify(p.was) : p.was);
+    what.push(`<div class="p" title="${esc(p.target)} ${esc(p.field)}: ${esc(was)} → ${esc(p.value)}"><b>${esc(p.target)}</b> <span class="dimmer">${esc(p.field)}</span> <span class="was">${esc(was)}</span> → ${esc(p.value)}<span class="x" data-key="${esc(p.target + "|" + p.field)}" title="Drop this one">✕</span></div>`);
+  }
+  if (S.pending.length && S.change) {
+    const tags = S.change.tags;
+    what.push(`<div class="sum">+${S.change.added} −${S.change.removed} notes in ${tags.length ? tags.map(esc).join(", ") : "no section (nothing sounds different)"}</div>`);
+  }
+  if (!S.pending.length && !S.error) {
+    what.push(`<div class="msg">${esc(S.message) || "Nothing pending. Change a chip, a motif or a chord: the change is drawn before it is kept."}</div>`);
+  }
+  $("what").innerHTML = what.join("");
+  $("what").querySelectorAll(".x").forEach((x) => {
+    x.onclick = () => {
+      const [target, field] = x.dataset.key.split("|");
+      S.pending = S.pending.filter((p) => !(p.target === target && p.field === field));
+      view();
+    };
+  });
+  const acts = [];
+  if (S.pending.length) {
+    acts.push(`<button class="primary" id="apply" title="Keep it and send it to kaiDAW (Enter)">keep <kbd style="color:#06170b;border-color:#06170b">⏎</kbd></button>`);
+    acts.push(`<button id="discard" title="Drop the pending change (Esc)">drop <kbd>esc</kbd></button>`);
+  } else if (S.ab) {
+    acts.push(`<span class="lbl">hear</span><span class="seg"><button id="abBefore" class="${S.ab === "before" ? "on" : ""}">before</button><button id="abAfter" class="${S.ab === "after" ? "on" : ""}">after</button></span><kbd>B</kbd>`);
+  }
+  $("actions").innerHTML = acts.join(" ");
+  if ($("apply")) $("apply").onclick = apply;
+  if ($("discard")) $("discard").onclick = discard;
+  if ($("abBefore")) $("abBefore").onclick = () => ab("before");
+  if ($("abAfter")) $("abAfter").onclick = () => ab("after");
+}
+
+async function apply() {
+  if (!S.pending.length) return;
+  busy(true);
+  try {
+    const r = await post("/compose/apply", { pending: S.pending });
+    S.message = r.message; S.pending = []; S.error = null;
+    if (!inKaidaw) S.message += " — open this page from kaiDAW's compose mode to hear it";
+  } catch (e) { S.error = String(e.message || e); }
+  await view();
+}
+function discard() { S.pending = []; S.error = null; S.message = "Dropped."; syncDraft(); view(); }
+async function ab(side) {
+  busy(true);
+  try { const r = await post("/compose/ab", { side }); S.message = r.message; } catch (e) { S.error = String(e.message || e); }
+  await view();
+}
+
+// ------------------------------------------------------------------ transport
+
+function tickNow() {
+  const t = S.transport;
+  if (!t) return null;
+  if (!t.playing) return t.position;
+  const el = Math.min(0.5, (performance.now() - t.stamp) / 1000);
+  let tick = t.position + el * ((t.tempo || 120) / 60) * PPQ;
+  const span = t.loopTo - t.loopFrom;
+  if (t.looping && span > 0 && tick > t.loopTo) tick = t.loopFrom + ((tick - t.loopFrom) % span);
+  return tick;
+}
+function renderTransport() {
+  const t = S.transport;
+  $("playBtn").textContent = t?.playing ? "■ stop" : "▶ play";
+  if (S.section && t) {
+    const o = occ(S.tag);
+    const looping = t.looping && o && Math.abs(t.loopFrom - o.start * PPQ) < 1 && Math.abs(t.loopTo - (o.start + o.bars * o.beatsPerBar) * PPQ) < 1;
+    $("loopBtn").classList.toggle("on", !!looping);
+  }
+}
+function frame() {
+  requestAnimationFrame(frame);
+  const tick = tickNow();
+  const head = $("mapHead2");
+  if (tick === null || !S.song) { head.style.display = "none"; return; }
+  const total = form().reduce((m, o) => Math.max(m, o.start + o.bars * o.beatsPerBar), 0) || 1;
+  const beat = tick / PPQ;
+  head.style.display = "";
+  head.style.left = (beat / total) * $("blocks").clientWidth + "px";
+  const rh = document.getElementById("rollHead");
+  const o = occ(S.tag);
+  if (rh && o && S.laneX) {
+    const local = beat - o.start;
+    const show = local >= 0 && local <= S.laneX.len;
+    rh.style.display = show ? "" : "none";
+    if (show) { const x = S.laneX.X(local); rh.setAttribute("x1", x); rh.setAttribute("x2", x); }
+  }
+}
+requestAnimationFrame(frame);
+
+function loopSection(play) {
+  const o = occ(S.tag);
+  if (!o) return;
+  toKaidaw({ type: "loop", from: o.start * PPQ, to: (o.start + o.bars * o.beatsPerBar) * PPQ, play: !!play });
+}
+$("loopBtn").onclick = () => {
+  const on = $("loopBtn").classList.contains("on");
+  if (on) toKaidaw({ type: "loop", enabled: false }); else loopSection(true);
+};
+$("playBtn").onclick = () => toKaidaw({ type: "transport", action: "toggle" });
+$("toArrange").onclick = () => toKaidaw({ type: "mode", mode: "arrange" });
+if (!inKaidaw) $("toArrange").style.display = "none";
+
+// ------------------------------------------------------------------ keys
+
+document.addEventListener("keydown", (e) => {
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (e.key === "`") { e.preventDefault(); toKaidaw({ type: "mode", mode: "arrange" }); return; }
+  if (e.code === "Space") { e.preventDefault(); toKaidaw({ type: "transport", action: "toggle" }); return; }
+  if (e.key === "Enter" && S.pending.length) { e.preventDefault(); apply(); return; }
+  if (e.key === "Escape") {
+    if (S.pending.length) discard(); else { S.chip = null; S.msel = null; renderLanes(); renderMotifEditor(); }
+    return;
+  }
+  if ((e.key === "b" || e.key === "B") && S.ab && !S.pending.length) { ab(S.ab === "after" ? "before" : "after"); return; }
+  if (e.key === "[") { step(-1); return; }
+  if (e.key === "]") { step(1); return; }
+  if ((e.key === "l" || e.key === "L") && !e.ctrlKey && !e.metaKey) { $("loopBtn").click(); return; }
+  if (S.focus === "motif" && motifKey(e)) return;
+  if (S.focus === "chip" && S.chip !== null) {
+    const chips = part(S.track)?.melody?.chips ?? [];
+    const map = { i: "inv", r: "rev", v: "vary", p: "plain" };
+    if (e.key === "ArrowUp") { e.preventDefault(); chipOp(e.shiftKey ? "octave_up" : "up"); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); chipOp(e.shiftKey ? "octave_down" : "down"); }
+    else if (e.key === "ArrowLeft" && e.altKey) { e.preventDefault(); chipOp("left"); }
+    else if (e.key === "ArrowRight" && e.altKey) { e.preventDefault(); chipOp("right"); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); if (S.chip > 0) selectChip(S.chip - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); if (S.chip < chips.length - 1) selectChip(S.chip + 1); }
+    else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); chipOp("delete"); }
+    else if (map[e.key.toLowerCase()]) { e.preventDefault(); chipOp(map[e.key.toLowerCase()]); }
+  }
+});
+
+// ------------------------------------------------------------------ drawing it all
+
+function render() {
+  renderMap();
+  renderSection();
+  renderStaff();
+  renderLanes();
+  renderSide();
+  renderBar();
+}
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (S.song) { renderMap(); renderLanes(); } }, 80);
+});
+
+toKaidaw({ type: "hello" });
+view();
+</script>
+</body>
+</html>
