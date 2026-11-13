@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from pypulang import lift
+from pypulang.ask import Agent
 from pypulang.backends.kaidaw import KaidawClient, KaidawError, SongState, pull, push
 from pypulang.compiler.edits import Edit, current_value, plain
 from pypulang.compiler.passes.voice_lead import parse_spec
@@ -36,7 +37,7 @@ from pypulang.harmony import parse_chart, parse_chord_symbol
 from pypulang.inspector import ClipView, Model, NoteChain
 from pypulang.ir.intent import Key
 from pypulang.motifs import parse_motif, parse_phrase
-from pypulang.panel import Lines, fold_html, song_html
+from pypulang.panel import Lines, agent_html, fold_html, runs_html, song_html
 from pypulang.patterns import PATTERN_REGISTRY
 from pypulang.songfile import load_song
 from pypulang.variations import SOURCE, sites
@@ -61,6 +62,7 @@ class Companion:
         # Readings and the fold preview are slow, so each is kept until the files change
         self._read_at: dict[str, tuple[float, ...]] = {}
         self._folding: tuple[tuple[float, ...], str] | None = None
+        self.agent = Agent(self.path, on_done=self._agent_done)
 
     def _files_stamp(self) -> tuple[float, ...]:
         files = [
@@ -156,6 +158,24 @@ class Companion:
                 return f'<p class="dim">{_e(error)}</p>'
             self._folding = (stamp, fold_html(result, self.path.name, back))
         return self._folding[1]
+
+    def ask(self, prompt: str, mode: str) -> str:
+        run = self.agent.ask(prompt, mode)
+        return f"Asked the agent: {run.prompt}"
+
+    def _agent_done(self, run: Any) -> None:
+        """A finished request: the song may have changed under the page."""
+        with self.guard:
+            self._stamp = None
+            if run.edited:
+                self.message = f"The agent changed {len(run.edited)} thing(s)" + self.push()
+            elif run.proposed:
+                self.message = f"The agent proposed {len(run.proposed)} alternative(s) to pick from"
+            else:
+                self.message = f"The agent {run.status}: {run.prompt}"
+
+    def runs(self, back: str) -> str:
+        return runs_html(self.agent.runs, self.state.load_overrides().choices, back)
 
     def fold(self) -> str:
         from pypulang.fold import fold
@@ -276,6 +296,10 @@ class Companion:
                     '<p class="dim">Checking what can be written into the source…</p></div>',
                     *_variations_html(model, back),
                 ],
+            ),
+            "agent": (
+                "agent ●" if self.agent.running else "agent",
+                agent_html(self.agent.available, back),
             ),
         }
         body = [
@@ -576,6 +600,12 @@ input.edited { border-color:var(--warm); }
 input:focus { border-color:var(--accent); outline:none; }
 button { cursor:pointer; } button:hover { border-color:var(--accent); }
 button.small { padding:0 4px; margin-left:2px; }
+textarea { width:100%; max-width:760px; box-sizing:border-box; background:var(--panel);
+           color:var(--ink); border:1px solid var(--line); border-radius:3px; font:inherit; padding:4px 6px; }
+form.ask div { margin:4px 0 8px; } label { margin-right:10px; }
+.run { border-top:1px solid var(--line); margin-top:8px; }
+.answer { white-space:pre-wrap; max-width:760px; }
+details ol { margin:4px 0; padding-left:22px; color:var(--dim); }
 pre.diff { background:var(--panel); border:1px solid var(--line); padding:6px 8px; overflow-x:auto; }
 pre.diff .add { color:var(--add); } pre.diff .del { color:var(--del); } pre.diff .hunk { color:var(--dim); }
 </style></head><body>
@@ -598,10 +628,19 @@ pre.diff .add { color:var(--add); } pre.diff .del { color:var(--del); } pre.diff
     for (const el of document.querySelectorAll("#tab-" + name + " [data-fragment]")) {
       if (loaded.has(el)) continue;
       loaded.add(el);
-      fetch(el.dataset.fragment).then((r) => r.text()).then((h) => { el.innerHTML = h; })
-        .catch(() => { el.innerHTML = '<p class="dim">Could not load this part.</p>'; });
+      load(el);
     }
     return name;
+  }
+  // A fragment with data-poll is fetched again while something in it is running,
+  // and the page reloads when it stops, since the song may have changed.
+  function load(el, wasRunning) {
+    fetch(el.dataset.fragment).then((r) => r.text()).then((h) => {
+      el.innerHTML = h;
+      const running = Boolean(el.querySelector("[data-running]"));
+      if (wasRunning && !running) location.reload();
+      else if (running && el.hasAttribute("data-poll")) setTimeout(() => load(el, true), 2000);
+    }).catch(() => { el.innerHTML = '<p class="dim">Could not load this part.</p>'; });
   }
   const tab = show(fresh ? "selection" : get("pulang.tab") || "song");
   for (const a of document.querySelectorAll("nav a")) {
@@ -628,12 +667,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, body: str, kind: str = "text/html; charset=utf-8") -> None:
         data = body.encode()
-        self.send_response(status)
-        self.send_header("content-type", kind)
-        self.send_header("content-length", str(len(data)))
-        self.send_header("cache-control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("content-type", kind)
+            self.send_header("content-length", str(len(data)))
+            self.send_header("cache-control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the page reloaded, as kaiDAW makes it after every change
 
     def do_GET(self) -> None:
         url = urlparse(self.path)
@@ -645,6 +687,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, self.companion.readings(query["clip"], query.get("back", "/")))
             elif url.path == "/fragment/fold":
                 self._send(200, self.companion.fold_preview(query.get("back", "/")))
+            elif url.path == "/fragment/agent":
+                self._send(200, self.companion.runs(query.get("back", "/")))
             elif url.path == "/health":
                 self._send(
                     200,
@@ -672,6 +716,13 @@ class _Handler(BaseHTTPRequestHandler):
                 companion.message = companion.pick(form["site"], form["name"])
             elif self.path == "/fold":
                 companion.message = companion.fold()
+            elif self.path == "/agent":
+                companion.message = companion.ask(
+                    form.get("prompt", ""), form.get("mode", "propose")
+                )
+            elif self.path == "/agent/stop":
+                companion.agent.stop()
+                companion.message = "Stopped the agent"
             elif self.path == "/lift/accept":
                 companion.message = companion.accept(form["clip"], int(form["index"]))
             else:

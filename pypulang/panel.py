@@ -261,3 +261,96 @@ def fold_html(result: Folding, file: str, back: str) -> str:
             rows.append(f'<span class="{kind}">{_e(line)}</span>')
         out.append('<pre class="diff">' + "\n".join(rows) + "</pre>")
     return "\n".join(out)
+
+
+def agent_html(available: bool, back: str) -> list[str]:
+    """The request form; the runs come in a fragment the page keeps fresh."""
+    if not available:
+        return [
+            '<p class="dim">Asking an agent needs Claude Code (<code>claude</code>) installed '
+            "where this page runs.</p>"
+        ]
+    return [
+        '<p class="dim">Claude Code with puLang\'s tools, on this song. It reads the song and '
+        "the docs, and changes the song only through puLang's tools, each checked by "
+        "compiling. It runs with your Claude Code login, so each request uses your plan.</p>",
+        '<form method="post" action="/agent" class="ask">'
+        f'<input type="hidden" name="back" value="{_e(back)}">'
+        '<textarea name="prompt" rows="3" placeholder="a darker chorus · answer the trumpet in '
+        'verse 2 · a calmer bridge"></textarea><div>'
+        '<label><input type="radio" name="mode" value="propose" checked> propose alternatives '
+        "to pick from</label> "
+        '<label><input type="radio" name="mode" value="edit"> make the change</label> '
+        "<button>Ask</button></div></form>",
+        f'<div data-fragment="/fragment/agent?{_query(back)}" data-poll><p class="dim">…</p></div>',
+    ]
+
+
+def runs_html(runs: list, picked: dict[str, str], back: str) -> str:
+    """Each request, newest first: what the agent did and said, and what it proposed."""
+    if not runs:
+        return '<p class="dim">No requests yet.</p>'
+    out = []
+    for run in runs:
+        state = {
+            "running": f"working · {run.seconds:.0f} s",
+            "done": f"done in {run.seconds:.0f} s",
+            "failed": "failed",
+            "stopped": "stopped",
+        }[run.status]
+        out.append(
+            f'<div class="run" {"" if run.handled else "data-running"}>'
+            f'<h2>{_e(run.prompt)} <span class="dim">{_e(run.mode)} · {_e(state)}</span>'
+        )
+        if run.status == "running":
+            out.append(
+                '<form method="post" action="/agent/stop" class="inline">'
+                f'<input type="hidden" name="back" value="{_e(back)}">'
+                '<button class="small">stop</button></form>'
+            )
+        out.append("</h2>")
+        if run.answer:
+            out.append(f'<p class="answer">{_e(run.answer)}</p>')
+        if run.proposed:
+            out.append("<table>")
+            for site, name in run.proposed:
+                mark = "● picked" if picked.get(site) == name else ""
+                button = (
+                    ""
+                    if mark
+                    else '<form method="post" action="/pick" class="inline">'
+                    f'<input type="hidden" name="site" value="{_e(site)}">'
+                    f'<input type="hidden" name="name" value="{_e(name)}">'
+                    f'<input type="hidden" name="back" value="{_e(back)}">'
+                    "<button>pick and hear it</button></form>"
+                )
+                out.append(
+                    f"<tr><td>{_e(site)}</td><td>{_e(name)}</td><td>{mark}{button}</td></tr>"
+                )
+            out.append("</table>")
+            sites = sorted({site for site, _ in run.proposed})
+            out.append(
+                '<p class="dim">Pick one and play it in kaiDAW; picking <b>source</b> in the '
+                "changes view goes back to the song as written. "
+                + ", ".join(f"{_e(s)}: {_e(picked.get(s, 'source'))}" for s in sites)
+                + "</p>"
+            )
+        if run.edited:
+            out.append('<p class="dim">Changed: ' + ", ".join(_e(k) for k in run.edited) + "</p>")
+        steps = [s for s in run.steps if s != run.answer.strip()]
+        if steps:
+            shown = steps[-40:]
+            out.append(
+                f"<details {'open' if run.status == 'running' else ''}><summary>"
+                f"{len(steps)} step(s)</summary><ol>"
+                + "".join(f"<li>{_e(step)}</li>" for step in shown)
+                + "</ol></details>"
+            )
+        out.append("</div>")
+    return "\n".join(out)
+
+
+def _query(back: str) -> str:
+    from urllib.parse import urlencode
+
+    return urlencode({"back": back})
