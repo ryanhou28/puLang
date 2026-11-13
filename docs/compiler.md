@@ -384,13 +384,27 @@ the source's level (a chord or pitches at the score level, notes moved by hand) 
 overrides, and so does any edit no rewrite reproduces, with the reason. `--dry-run` shows the
 diff without writing.
 
-`pulang serve song.py` serves a page that kaiDAW shows in its source tab. Select a clip, or
-notes in the piano roll, and it shows what produced them at every level, from the note in
-kaiDAW through the event and score notes to the chord slot, the chord and the section's
-track settings, each with the edits that level takes. An edit is recompiled and pushed at
-once.
+`pulang serve song.py` serves a page that kaiDAW shows in its source tab; start kaiDAW with
+`--companion http://127.0.0.1:8950` and the tab finds it. The page has four views:
 
-The page can also read hand edits made in kaiDAW. Each reading is a guess at the higher edit
+- **song**: every section's tempo, chart and parts, the motifs and who uses them, and the
+  mix, each value an input, with the line of the song that set it and a mark where an edit
+  changed it (with a button back to what the source says);
+- **selection**: select a clip, or notes in the piano roll, and it shows what produced them
+  at every level, from the note in kaiDAW through the event and score notes to the chord
+  slot, the chord and the section's track settings, each with the edits that level takes;
+- **changes**: the edits kept beside the song, the variations to pick from, and what
+  folding would write into the source, as a diff, with a button that does it;
+- **agent**: say what you want and Claude Code works on the song with the tools below,
+  proposing alternatives to pick from or, if asked, making the change. It is `claude -p`
+  with `pulang mcp` as its only MCP server and Read as its only built-in tool, run with your
+  own Claude Code login, so each request uses your plan.
+
+An edit is recompiled and pushed at once. A new selection in kaiDAW opens the selection
+view; otherwise the page keeps its view and place across the reloads kaiDAW makes after
+every change.
+
+The page also reads hand edits made in kaiDAW, as soon as a clip that has them is selected. Each reading is a guess at the higher edit
 they mean: a new voicing of a chord, a different chord, the part an octave up, the part
 muted. Every guess is checked by lowering the song with it, and is shown with how many of
 the hand edits it reproduces exactly and how many notes nobody touched it would also change.
