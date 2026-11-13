@@ -11,6 +11,7 @@ The `pulang` command.
     pulang save song.py <path>            Save the project the server has open
     pulang edits song.py                  List those edits
     pulang drop song.py <location>        Forget one of them
+    pulang fold song.py                   Write the edits into the song's source
     pulang render song.py -o song.wav     Bounce it
     pulang stems song.py -o stems/        Bounce each track alone, and measure them
     pulang watch song.py                  Push every time the file is saved
@@ -156,6 +157,21 @@ def cmd_drop(args: argparse.Namespace) -> int:
         return 1
     state.save_overrides(overrides)
     print(f"Dropped {args.location}. The next push restores what the source makes there.")
+    return 0
+
+
+def cmd_fold(args: argparse.Namespace) -> int:
+    from pypulang.fold import fold
+
+    result = fold(args.song, write=not args.dry_run)
+    if result.diff:
+        print(result.diff, end="")
+    for line in result.lines():
+        print(line)
+    if not result.folded and not result.kept:
+        print("No edits to fold.")
+    elif args.dry_run and result.folded:
+        print("Dry run: nothing written.")
     return 0
 
 
@@ -417,6 +433,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     drop = command("drop", cmd_drop, "Forget one edit")
     drop.add_argument("location")
+    fold_cmd = command("fold", cmd_fold, "Write the edits into the song's source")
+    fold_cmd.add_argument("--dry-run", action="store_true", help="Show the change only")
 
     render = with_port(command("render", cmd_render, "Push, then bounce to a WAV"))
     render.add_argument("-o", "--output", required=True)

@@ -2,12 +2,17 @@
 `pulang serve`: the song's IR beside kaiDAW, and edits at every level.
 
 kaiDAW shows this page in its source panel, passing the selected clip and notes.
-The page shows what produced them, level by level, with the edits each level can
-take: a chord or a track's settings in the intent IR, one occurrence's chord or a
-chord's exact voicing in the score IR. An edit is kept in the song's overrides at
-the level it was made, then the song is recompiled and pushed, so kaiDAW shows the
-result a moment later. Nothing here is part of kaiDAW's protocol: kaiDAW passes ids
-and shows a page, and the music stays on this side (kaiDAW blueprint §3.10).
+It has three views. The song: every section's chart, tempo and parts, the motifs
+and the mix, each an input, with the line of the song that set it. The
+selection: what produced the selected notes, level by level, with the edits each
+level can take, and the hand edits made in kaiDAW read as the higher edits they
+might mean. The changes: the edits kept beside the song, the variations to
+pick from, and folding the edits into the song's source.
+
+An edit is kept in the song's overrides at the level it was made, then the song is
+recompiled and pushed, so kaiDAW shows the result a moment later. Nothing here is
+part of kaiDAW's protocol: kaiDAW passes ids and shows a page, and the music stays
+on this side (kaiDAW blueprint §3.10).
 """
 
 from __future__ import annotations
@@ -22,8 +27,9 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from pypulang import lift
+from pypulang.ask import Agent
 from pypulang.backends.kaidaw import KaidawClient, KaidawError, SongState, pull, push
-from pypulang.compiler.edits import Edit, current_value
+from pypulang.compiler.edits import Edit, current_value, plain
 from pypulang.compiler.passes.voice_lead import parse_spec
 from pypulang.compiler.spelling import midi_of, spell
 from pypulang.context_patterns import CONTEXT_PATTERNS
@@ -31,6 +37,7 @@ from pypulang.harmony import parse_chart, parse_chord_symbol
 from pypulang.inspector import ClipView, Model, NoteChain
 from pypulang.ir.intent import Key
 from pypulang.motifs import parse_motif, parse_phrase
+from pypulang.panel import Lines, agent_html, fold_html, runs_html, song_html
 from pypulang.patterns import PATTERN_REGISTRY
 from pypulang.songfile import load_song
 from pypulang.variations import SOURCE, sites
@@ -49,8 +56,13 @@ class Companion:
         self.message = ""
         self._stamp: tuple[float, ...] | None = None
         self._model: Model | None = None
+        self._lines: Lines | None = None
         self._title = ""
         self.suggestions: dict[str, list[lift.Suggestion]] = {}
+        # Readings and the fold preview are slow, so each is kept until the files change
+        self._read_at: dict[str, tuple[float, ...]] = {}
+        self._folding: tuple[tuple[float, ...], str] | None = None
+        self.agent = Agent(self.path, on_done=self._agent_done)
 
     def _files_stamp(self) -> tuple[float, ...]:
         files = [
@@ -68,6 +80,7 @@ class Companion:
                 result = song.compile(keep_trace=True)
                 self._title = self.path.stem
                 self._model = Model(result, self.state.load_lock(), self.state.load_overrides())
+                self._lines = Lines(song.builder, self.path)
                 self._stamp = stamp
             return self._model
 
@@ -108,20 +121,72 @@ class Companion:
             self.state.save_overrides(overrides)
             return f"dropped {key}" + self.push()
 
-    def read_edits(self, clip_key: str) -> str:
-        """Capture DAW edits, then find what they might mean at a higher level."""
+    def readings(self, clip_key: str, back: str) -> str:
+        """
+        Capture the hand edits made in kaiDAW, then read the selected clip's as the
+        higher edits they might mean: what the selection view shows as soon as a
+        clip with hand edits is selected.
+        """
         with self.guard:
             if self.client is not None:
-                pull(self.client, self.state)
+                try:
+                    pull(self.client, self.state)
+                except KaidawError as error:
+                    return f'<p class="dim">Could not read kaiDAW: {_e(error)}</p>'
             model = self.model()
-            found = lift.suggest(load_song(self.path), model, clip_key)
-            self.suggestions[clip_key] = found
-            edited = sum(1 for loc in model.overrides.notes if loc.startswith(clip_key + "/"))
-            if not edited:
-                return f"no hand edits in {clip_key}"
-            return (
-                f"{edited} hand edit(s) in {clip_key}; {len(found)} reading(s) explain some of them"
-            )
+            view = model.clip(model.lock.clips.get(clip_key, {}).get("id", ""))
+            edited = [loc for loc in model.overrides.notes if loc.startswith(clip_key + "/")]
+            if view is None or not edited:
+                return (
+                    '<p class="dim">No hand edits in this clip. Notes moved, drawn or deleted '
+                    "in kaiDAW are read here when the clip is selected.</p>"
+                )
+            if self._read_at.get(clip_key) != self._stamp:
+                self.suggestions[clip_key] = lift.suggest(load_song(self.path), model, clip_key)
+                self._read_at[clip_key] = self._stamp
+            return "\n".join(_lift_html(view, model, self.suggestions[clip_key], back))
+
+    def fold_preview(self, back: str) -> str:
+        """What folding would write, computed once per change of the song's files."""
+        from pypulang.fold import fold
+
+        stamp = self._files_stamp()
+        if self._folding is None or self._folding[0] != stamp:
+            try:
+                result = fold(self.path, write=False)
+            except ValueError as error:
+                return f'<p class="dim">{_e(error)}</p>'
+            self._folding = (stamp, fold_html(result, self.path.name, back))
+        return self._folding[1]
+
+    def ask(self, prompt: str, mode: str) -> str:
+        run = self.agent.ask(prompt, mode)
+        return f"Asked the agent: {run.prompt}"
+
+    def _agent_done(self, run: Any) -> None:
+        """A finished request: the song may have changed under the page."""
+        with self.guard:
+            self._stamp = None
+            if run.edited:
+                self.message = f"The agent changed {len(run.edited)} thing(s)" + self.push()
+            elif run.proposed:
+                self.message = f"The agent proposed {len(run.proposed)} alternative(s) to pick from"
+            else:
+                self.message = f"The agent {run.status}: {run.prompt}"
+
+    def runs(self, back: str) -> str:
+        return runs_html(self.agent.runs, self.state.load_overrides().choices, back)
+
+    def fold(self) -> str:
+        from pypulang.fold import fold
+
+        with self.guard:
+            result = fold(self.path)
+            self._stamp = None
+            note = f"Wrote {len(result.folded)} edit(s) into {self.path.name}"
+            if result.kept:
+                note += f"; {len(result.kept)} stay beside it"
+            return note + self.push()
 
     def accept(self, clip_key: str, index: int) -> str:
         with self.guard:
@@ -129,6 +194,7 @@ class Companion:
             overrides = lift.accept(load_song(self.path), self.state.load_overrides(), suggestion)
             self.state.save_overrides(overrides)
             self.suggestions.pop(clip_key, None)
+            self._read_at.pop(clip_key, None)
             return f"kept {suggestion.id}" + self.push()
 
     def push(self) -> str:
@@ -214,24 +280,60 @@ class Companion:
             clip_id = model.lock.clips.get(entry["clip"], {}).get("id", "") if entry else ""
         view = model.clip(clip_id, note_ids) if clip_id else None
         back = "/inspect?" + urlencode({"clipId": clip_id, "noteIds": ",".join(note_ids)})
-        body = [f"<h1>{_e(self._title)}</h1>"]
+        edits = model.overrides.edit_list()
+        tabs = {
+            "song": (
+                "song",
+                song_html(model, self._lines, back, view and (view.section, view.track)),
+            ),
+            "selection": ("selection", self._selection(view, clip_id, model, back)),
+            "changes": (
+                f"changes ({len(edits)})" if edits else "changes",
+                [
+                    *_edits_html(model, back),
+                    "<h2>Fold into the source</h2>",
+                    f'<div data-fragment="/fragment/fold?{urlencode({"back": back})}">'
+                    '<p class="dim">Checking what can be written into the source…</p></div>',
+                    *_variations_html(model, back),
+                ],
+            ),
+            "agent": (
+                "agent ●" if self.agent.running else "agent",
+                agent_html(self.agent.available, back),
+            ),
+        }
+        body = [
+            f"<header><h1>{_e(self._title)}</h1><nav>"
+            + "".join(
+                f'<a href="#" data-tab="{k}">{_e(label)}</a>' for k, (label, _) in tabs.items()
+            )
+            + "</nav></header>"
+        ]
         # Kept until the next action: kaiDAW reloads this page when the push it
         # caused lands, and a message cleared on first view would flash and vanish.
         if self.message:
             body.append(f'<p class="msg">{_e(self.message)}</p>')
-        if view is None:
+        for name, (_, content) in tabs.items():
             body.append(
+                f'<section class="tab" id="tab-{name}" hidden>' + "\n".join(content) + "</section>"
+            )
+        return _PAGE.replace("{body}", "\n".join(body))
+
+    @staticmethod
+    def _selection(view: ClipView | None, clip_id: str, model: Model, back: str) -> list[str]:
+        if view is None:
+            return [
                 '<p class="dim">Select a clip in kaiDAW, or notes in its piano roll, to see '
                 "what produced them.</p>"
                 if not clip_id
                 else f'<p class="dim">Clip {_e(clip_id)} did not come from this song.</p>'
-            )
-        else:
-            body.extend(_clip_html(view, model, back))
-            body.extend(_lift_html(view, model, self.suggestions.get(view.key), back))
-        body.extend(_variations_html(model, back))
-        body.extend(_edits_html(model, back))
-        return _PAGE.replace("{body}", "\n".join(body))
+            ]
+        return [
+            *_clip_html(view, model, back),
+            '<h2>Hand edits in this clip <span class="lvl">daw → higher</span></h2>',
+            f'<div data-fragment="/fragment/readings?{urlencode({"clip": view.key, "back": back})}">'
+            '<p class="dim">Reading the edits made in kaiDAW…</p></div>',
+        ]
 
 
 def _slot_key(slot: Any) -> str:
@@ -335,7 +437,7 @@ def _clip_html(view: ClipView, model: Model, back: str) -> list[str]:
         for name, value in track.settings.items():
             if name == "pattern":
                 text = value["kind"] + (
-                    " " + json.dumps(value["params"]) if value["params"] else ""
+                    " " + json.dumps(plain(value["params"])) if value["params"] else ""
                 )
                 hint = "a pattern name, optionally followed by its parameters as JSON"
             elif name == "melody":
@@ -377,13 +479,8 @@ def _lift_html(
 ) -> list[str]:
     edited = [loc for loc in model.overrides.notes if loc.startswith(view.key + "/")]
     out = [
-        '<h2>Hand edits in this clip <span class="lvl">daw → higher</span></h2>',
-        f'<p class="dim">{len(edited)} note edit(s) made in kaiDAW are kept here. Reading them '
-        "recompiles the song once per guess, so it takes a few seconds.</p>",
-        f'<form method="post" action="/lift/find" class="inline">'
-        f'<input type="hidden" name="clip" value="{_e(view.key)}">'
-        f'<input type="hidden" name="back" value="{_e(back)}">'
-        f"<button>read my edits</button></form>",
+        f'<p class="dim">{len(edited)} note edit(s) made in kaiDAW are kept here, each read '
+        "as the higher edits it might mean; every reading is checked by recompiling.</p>",
     ]
     if found is None:
         return out
@@ -472,27 +569,92 @@ _PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>puLang source</title>
 <style>
 :root { color-scheme: dark; --ink:#d8dde6; --dim:#7d8594; --line:#2a2f3a; --panel:#161a21;
-        --accent:#5ab0ff; --warm:#f2b25c; }
-body { margin:0; padding:10px 14px; background:#0f1217; color:var(--ink);
+        --accent:#5ab0ff; --warm:#f2b25c; --add:#7fd18b; --del:#ef8a8a; }
+body { margin:0; padding:0 14px 14px; background:#0f1217; color:var(--ink);
        font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-h1 { font-size:13px; margin:0 0 4px; color:var(--accent); font-weight:600; }
+header { position:sticky; top:0; background:#0f1217; padding:8px 0 6px; z-index:1;
+         display:flex; gap:16px; align-items:baseline; border-bottom:1px solid var(--line); }
+h1 { font-size:13px; margin:0; color:var(--accent); font-weight:600; }
+nav a { color:var(--dim); text-decoration:none; margin-right:12px; }
+nav a.on { color:var(--ink); border-bottom:2px solid var(--accent); }
+nav a:hover { color:var(--ink); }
 h2 { font-size:12px; margin:14px 0 4px; font-weight:600; }
 .lvl { font-weight:400; color:#0f1217; background:var(--warm); border-radius:2px; padding:0 4px; }
-.dim { color:var(--dim); }
-.where { margin:0 0 6px; }
-.msg { background:#1d2a1d; border:1px solid #2f4a2f; padding:4px 8px; border-radius:3px; }
+.dim { color:var(--dim); font-weight:400; }
+.where { margin:8px 0 2px; }
+.form a { color:var(--accent); text-decoration:none; }
+.msg { background:#1d2a1d; border:1px solid #2f4a2f; padding:4px 8px; border-radius:3px; margin:8px 0; }
 .tag { color:#0f1217; background:#e7b0ff; border-radius:2px; padding:0 4px; }
+.ed { color:#0f1217; background:var(--warm); border-radius:2px; padding:0 4px; margin-left:4px; }
+.line { color:var(--dim); font-weight:400; cursor:help; }
+.sec { border-top:1px solid var(--line); margin-top:10px; }
 table { border-collapse:collapse; }
 td, th { border-bottom:1px solid var(--line); padding:2px 8px 2px 0; text-align:left;
          vertical-align:middle; }
 th { color:var(--dim); font-weight:400; }
+tr.sel td { background:#1b2533; }
 form.inline { display:inline; margin:0; }
 input, button { background:var(--panel); color:var(--ink); border:1px solid var(--line);
                 border-radius:3px; font:inherit; padding:1px 5px; }
+input.edited { border-color:var(--warm); }
 input:focus { border-color:var(--accent); outline:none; }
 button { cursor:pointer; } button:hover { border-color:var(--accent); }
+button.small { padding:0 4px; margin-left:2px; }
+textarea { width:100%; max-width:760px; box-sizing:border-box; background:var(--panel);
+           color:var(--ink); border:1px solid var(--line); border-radius:3px; font:inherit; padding:4px 6px; }
+form.ask div { margin:4px 0 8px; } label { margin-right:10px; }
+.run { border-top:1px solid var(--line); margin-top:8px; }
+.answer { white-space:pre-wrap; max-width:760px; }
+details ol { margin:4px 0; padding-left:22px; color:var(--dim); }
+pre.diff { background:var(--panel); border:1px solid var(--line); padding:6px 8px; overflow-x:auto; }
+pre.diff .add { color:var(--add); } pre.diff .del { color:var(--del); } pre.diff .hunk { color:var(--dim); }
 </style></head><body>
 {body}
+<script>
+(() => {
+  const get = (k, s = localStorage) => { try { return s.getItem(k) || ""; } catch { return ""; } };
+  const set = (k, v, s = localStorage) => { try { s.setItem(k, v); } catch { /* per viewer only */ } };
+  const clip = new URLSearchParams(location.search).get("clipId") || "";
+  // A new selection in kaiDAW shows what produced it; otherwise stay where you were,
+  // since kaiDAW reloads this page after every change.
+  const fresh = clip && clip !== get("pulang.clip");
+  set("pulang.clip", clip);
+  const loaded = new Set();
+  function show(name) {
+    if (!document.getElementById("tab-" + name)) name = "song";
+    for (const s of document.querySelectorAll("section.tab")) s.hidden = s.id !== "tab-" + name;
+    for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.tab === name);
+    set("pulang.tab", name);
+    for (const el of document.querySelectorAll("#tab-" + name + " [data-fragment]")) {
+      if (loaded.has(el)) continue;
+      loaded.add(el);
+      load(el);
+    }
+    return name;
+  }
+  // A fragment with data-poll is fetched again while something in it is running,
+  // and the page reloads when it stops, since the song may have changed.
+  function load(el, wasRunning) {
+    fetch(el.dataset.fragment).then((r) => r.text()).then((h) => {
+      el.innerHTML = h;
+      const running = Boolean(el.querySelector("[data-running]"));
+      if (wasRunning && !running) location.reload();
+      else if (running && el.hasAttribute("data-poll")) setTimeout(() => load(el, true), 2000);
+    }).catch(() => { el.innerHTML = '<p class="dim">Could not load this part.</p>'; });
+  }
+  const tab = show(fresh ? "selection" : get("pulang.tab") || "song");
+  for (const a of document.querySelectorAll("nav a")) {
+    a.onclick = (e) => {
+      e.preventDefault();
+      show(a.dataset.tab);
+      const row = a.dataset.tab === "song" && document.querySelector("tr.sel");
+      if (row) row.scrollIntoView({ block: "center" }); else scrollTo(0, 0);
+    };
+  }
+  scrollTo(0, Number(get("pulang.scroll." + tab, sessionStorage)) || 0);
+  addEventListener("pagehide", () => set("pulang.scroll." + get("pulang.tab"), String(scrollY), sessionStorage));
+})();
+</script>
 </body></html>
 """
 
@@ -505,12 +667,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, body: str, kind: str = "text/html; charset=utf-8") -> None:
         data = body.encode()
-        self.send_response(status)
-        self.send_header("content-type", kind)
-        self.send_header("content-length", str(len(data)))
-        self.send_header("cache-control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("content-type", kind)
+            self.send_header("content-length", str(len(data)))
+            self.send_header("cache-control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the page reloaded, as kaiDAW makes it after every change
 
     def do_GET(self) -> None:
         url = urlparse(self.path)
@@ -518,6 +683,12 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/inspect"):
                 self._send(200, self.companion.page(query))
+            elif url.path == "/fragment/readings":
+                self._send(200, self.companion.readings(query["clip"], query.get("back", "/")))
+            elif url.path == "/fragment/fold":
+                self._send(200, self.companion.fold_preview(query.get("back", "/")))
+            elif url.path == "/fragment/agent":
+                self._send(200, self.companion.runs(query.get("back", "/")))
             elif url.path == "/health":
                 self._send(
                     200,
@@ -543,8 +714,15 @@ class _Handler(BaseHTTPRequestHandler):
                 companion.message = companion.drop(form["key"])
             elif self.path == "/pick":
                 companion.message = companion.pick(form["site"], form["name"])
-            elif self.path == "/lift/find":
-                companion.message = companion.read_edits(form["clip"])
+            elif self.path == "/fold":
+                companion.message = companion.fold()
+            elif self.path == "/agent":
+                companion.message = companion.ask(
+                    form.get("prompt", ""), form.get("mode", "propose")
+                )
+            elif self.path == "/agent/stop":
+                companion.agent.stop()
+                companion.message = "Stopped the agent"
             elif self.path == "/lift/accept":
                 companion.message = companion.accept(form["clip"], int(form["index"]))
             else:

@@ -87,6 +87,7 @@ def _section_op(section: Section) -> intent.SectionOp:
         section.time_signature,
         [harmony, *tracks, *curves, *audio, *fills, *tempos],
         tempo=section.tempo,
+        derived_from=section.derived_from,
     )
     op.location = name_loc(section.name)
     return op

@@ -94,6 +94,11 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": _schema({"key": {"type": "string"}}, ["key"]),
     },
     {
+        "name": "fold",
+        "description": "Write the hand edits into the song's source where a person would have made them, and drop them from its overrides. Each is checked by compiling; returns what was folded, what was kept and why, and the diff.",
+        "inputSchema": _schema({"dry_run": {"type": "boolean", "default": False}}, []),
+    },
+    {
         "name": "propose",
         "description": 'Keep an alternative at a site (such as "chorus hook") as a named bundle of edits, without picking it. Checked by compiling; reports the notes it changes against the source.',
         "inputSchema": _schema(

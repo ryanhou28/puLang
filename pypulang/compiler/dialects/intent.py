@@ -108,7 +108,8 @@ class PieceOp(IRDLOperation):
 
 @irdl_op_definition
 class SectionOp(IRDLOperation):
-    """A formal unit. `key` and `meter` override the piece when present."""
+    """A formal unit. `key` and `meter` override the piece when present; `from` names
+    the section this one was made from, which edits to that section follow into."""
 
     name = "intent.section"
     section = prop_def(StringAttr)
@@ -116,11 +117,12 @@ class SectionOp(IRDLOperation):
     key = opt_prop_def(KeyAttr)
     meter = opt_prop_def(MeterAttr)
     tempo = opt_prop_def(FloatAttr)
+    derived_from = opt_prop_def(StringAttr)
     body = region_def("single_block")
     traits = traits_def(NoTerminator())
     assembly_format = (
         "$section `bars` $bars (`key` $key^)? (`meter` $meter^)? (`tempo` $tempo^)? "
-        "attr-dict-with-keyword $body"
+        "(`from` $derived_from^)? attr-dict-with-keyword $body"
     )
 
     def __init__(
@@ -131,6 +133,7 @@ class SectionOp(IRDLOperation):
         meter: TimeSignature | None,
         ops: Sequence[IRDLOperation],
         tempo: float | None = None,
+        derived_from: str | None = None,
     ):
         props: dict[str, Attribute] = {
             "section": StringAttr(section),
@@ -142,6 +145,8 @@ class SectionOp(IRDLOperation):
             props["meter"] = MeterAttr(meter)
         if tempo is not None:
             props["tempo"] = float_attr(tempo)
+        if derived_from is not None:
+            props["derived_from"] = StringAttr(derived_from)
         super().__init__(properties=props, regions=[Region(Block(ops))])
 
     def harmony(self) -> HarmonyOp | None:

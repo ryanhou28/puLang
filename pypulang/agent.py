@@ -662,6 +662,23 @@ def audition(
     }
 
 
+def fold(song: str, dry_run: bool = False) -> dict[str, Any]:
+    """
+    Write the hand edits into the song's source, where a person would have made
+    them, and drop them from its overrides. Each is checked by compiling: one is
+    folded only when the song plays exactly as it did with the edit kept aside.
+    """
+    from pypulang.fold import fold as fold_song
+
+    result = fold_song(song, write=not dry_run)
+    return {
+        "folded": [{"edit": e.key, "how": how} for e, how in result.folded],
+        "kept": [{"edit": e.key, "why": why} for e, why in result.kept],
+        "diff": result.diff,
+        "written": bool(result.folded) and not dry_run,
+    }
+
+
 # -- the table the CLI and the MCP server share ---------------------------------------------
 
 TOOLS: dict[str, Any] = {
@@ -671,6 +688,7 @@ TOOLS: dict[str, Any] = {
     "variations": variations,
     "edit": edit,
     "drop": drop,
+    "fold": fold,
     "propose": propose,
     "pick": pick,
     "drop_variation": drop_variation,
