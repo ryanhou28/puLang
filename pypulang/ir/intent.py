@@ -691,6 +691,8 @@ class Section:
         harmony: Chord progression
         tracks: List of tracks in this section
         curves: Parameter automation during this section
+        derived_from: The section this one was made from (`transform`), which
+            edits to that section follow into
     """
 
     name: str
@@ -704,6 +706,7 @@ class Section:
     fills: list[Fill] = field(default_factory=list)
     tempo: float | None = None
     tempo_changes: list[TempoChange] = field(default_factory=list)
+    derived_from: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {

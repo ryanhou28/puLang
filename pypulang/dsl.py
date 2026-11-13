@@ -12,6 +12,8 @@ This module provides the user-facing API for composing music:
 from __future__ import annotations
 
 import copy
+import os
+import sys
 from dataclasses import replace
 from enum import Enum
 from fractions import Fraction
@@ -407,6 +409,23 @@ def note_value_to_beats(value: Fraction | float | int | str) -> Fraction:
     return Fraction(value).limit_denominator(3840) * 4
 
 
+# Where a builder call was made: (file, line) of each caller outside puLang,
+# innermost first. `fold` reads it to find the call in the song that set a value.
+Origin = tuple[tuple[str, int], ...]
+_PACKAGE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _origin() -> Origin:
+    frames = []
+    frame = sys._getframe(1)
+    while frame is not None:
+        file = frame.f_code.co_filename
+        if not file.startswith(_PACKAGE):
+            frames.append((file, frame.f_lineno))
+        frame = frame.f_back
+    return tuple(frames)
+
+
 class TrackBuilder:
     """
     Builder for creating tracks with method chaining.
@@ -432,6 +451,11 @@ class TrackBuilder:
         self._velocity: int = 100
         self._muted: bool = False
         self._voicing: str | None = None
+        # The call that made the track and the call that set each field
+        self._origins: dict[str, Origin] = {}
+
+    def _set_by(self, field: str) -> None:
+        self._origins = {**self._origins, field: _origin()}
 
     def pattern(self, pattern: PatternBuilder | str, **kwargs: Any) -> TrackBuilder:
         """Set the pattern for this track."""
@@ -444,6 +468,7 @@ class TrackBuilder:
             self._content = pattern.to_pattern()
         else:
             raise TypeError(f"Expected PatternBuilder or str, got {type(pattern)}")
+        self._set_by("pattern")
         return self
 
     def notes(self, note_list: list[Any]) -> TrackBuilder:
@@ -582,6 +607,7 @@ class TrackBuilder:
         """
         parse_phrase(phrase)  # report a mistake here rather than at compile time
         self._content = Melody(phrase=phrase, low=int(low), high=int(high), fit=fit)
+        self._set_by("melody")
         return self
 
     def voicing(self, name: str, low: int | None = None, high: int | None = None) -> TrackBuilder:
@@ -598,11 +624,13 @@ class TrackBuilder:
         progression moves as little as it can.
         """
         self._voicing = name if low is None else f"{name}({int(low)},{int(high)})"
+        self._set_by("voicing")
         return self
 
     def octave(self, n: int) -> TrackBuilder:
         """Set octave shift for this track."""
         self._octave_shift = n
+        self._set_by("octave")
         return self
 
     def velocity(self, v: int) -> TrackBuilder:
@@ -610,16 +638,19 @@ class TrackBuilder:
         if not 0 <= v <= 127:
             raise ValueError(f"Velocity must be 0-127, got {v}")
         self._velocity = v
+        self._set_by("velocity")
         return self
 
     def mute(self) -> TrackBuilder:
         """Mute this track."""
         self._muted = True
+        self._set_by("muted")
         return self
 
     def unmute(self) -> TrackBuilder:
         """Unmute this track."""
         self._muted = False
+        self._set_by("muted")
         return self
 
     def _ir_content(self) -> TrackContent | None:
@@ -684,6 +715,10 @@ class SectionBuilder:
         self._fills: list[Fill] = []
         self._tempo: float | None = None
         self._tempo_changes: list[TempoChange] = []
+        # The section this one was made from by `transform`, if any
+        self._derived_from: str | None = None
+        # The call that made the section, and the one that set its harmony
+        self._origins: dict[str, Origin] = {}
 
     @property
     def name(self) -> str:
@@ -739,6 +774,7 @@ class SectionBuilder:
                 )
 
         self._harmony = Harmony(changes=changes, duration_unit="bars")
+        self._origins = {**self._origins, "harmony": _origin()}
         return self
 
     def chart(self, chart: str) -> SectionBuilder:
@@ -755,6 +791,7 @@ class SectionBuilder:
         key = self._key or self._piece._key
         changes = [ChordChange(chord=c, duration=d) for c, d in chart_changes(chart, key, self._bars)]
         self._harmony = Harmony(changes=changes, duration_unit="bars")
+        self._origins = {**self._origins, "harmony": _origin()}
         return self
 
     def progression(self, *chords: ChordArg) -> SectionBuilder:
@@ -774,13 +811,20 @@ class SectionBuilder:
             name: Track identifier
             role: Musical role (MELODY, BASS, HARMONY, RHYTHM)
             instrument: MIDI instrument name or number
+
+        A track the section already has is returned as it is, so a later line can
+        change one setting: `verse.track("piano").velocity(64)`.
         """
+        existing = next((t for t in self._tracks if t._name == name), None)
+        if existing is not None:
+            return existing
         track = TrackBuilder(
             name=name,
             section=self,
             role=role,
             instrument=instrument,
         )
+        track._origins = {"track": _origin()}
         self._tracks.append(track)
         return track
 
@@ -821,9 +865,13 @@ class SectionBuilder:
         if reharmonize is not None:
             changes = reharmonize_changes(changes, key, reharmonize)
         section._harmony = Harmony(changes=list(changes), duration_unit=self._harmony.duration_unit)
+        section._derived_from = self._name
+        if reharmonize is None and "harmony" in self._origins:
+            section._origins = {**section._origins, "harmony": self._origins["harmony"]}
         for track in self._tracks:
             copied = copy.copy(track)
             copied._section = section
+            copied._origins = dict(track._origins)
             if track._role != Role.RHYTHM:
                 copied._octave_shift = track._octave_shift + register
             if isinstance(track._content, Notes) and transpose and track._role != Role.RHYTHM:
@@ -1011,6 +1059,7 @@ class SectionBuilder:
             fills=list(self._fills),
             tempo=self._tempo,
             tempo_changes=list(self._tempo_changes),
+            derived_from=self._derived_from,
         )
 
 
@@ -1054,6 +1103,9 @@ class PieceBuilder:
         self._form: list[str] | None = None
         self._racks: list[Rack] = []
         self._motifs: dict[str, str] = {}
+        # The calls that named each motif and declared each rack
+        self._motif_origins: dict[str, Origin] = {}
+        self._rack_origins: dict[str, Origin] = {}
 
     def section(
         self,
@@ -1092,6 +1144,7 @@ class PieceBuilder:
             time_signature=section_time_sig,
         )
         section._tempo = _bpm(tempo) if tempo is not None else None
+        section._origins = {"section": _origin()}
         self._sections.append(section)
         return section
 
@@ -1129,6 +1182,7 @@ class PieceBuilder:
                 sends=dict(sends or {}),
             )
         )
+        self._rack_origins[track] = _origin()
         return self
 
     def motif(self, name: str, notes: str) -> PieceBuilder:
@@ -1146,6 +1200,7 @@ class PieceBuilder:
         """
         parse_motif(notes)  # report a mistake here rather than at compile time
         self._motifs[name] = notes
+        self._motif_origins[name] = _origin()
         return self
 
     def form(self, sections: list[SectionBuilder | str]) -> PieceBuilder:

@@ -108,6 +108,8 @@ class EditReport:
     applied: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     orphaned: list[str] = field(default_factory=list)
+    # Edit key to the sections made from its section that it followed into
+    followed: dict[str, list[str]] = field(default_factory=dict)
 
     def lines(self) -> list[str]:
         return [
@@ -233,6 +235,58 @@ def _section_key(piece: intent.PieceOp, section: intent.SectionOp) -> Key:
     return section.key.data if section.key is not None else piece.key.data
 
 
+def derived_sections(piece: intent.PieceOp, name: str) -> list[intent.SectionOp]:
+    """The sections made from `name` by `transform`, and those made from them."""
+    found: list[intent.SectionOp] = []
+    names = {name}
+    while names:
+        made = [
+            s
+            for s in piece.sections()
+            if s.derived_from is not None and s.derived_from.data in names and s not in found
+        ]
+        found += made
+        names = {s.section.data for s in made}
+    return found
+
+
+_MISSING = object()
+
+
+def _setting(section: intent.SectionOp, rest: str, name: str) -> Any:
+    """What an edit at `rest` changes in a section, to compare with the sections made from it."""
+    if rest.startswith("harmony"):
+        harmony = section.harmony()
+        return None if harmony is None else (harmony.chords, harmony.durations, harmony.unit)
+    if rest == "":
+        return section.tempo
+    track = next((t for t in section.tracks() if t.track.data == rest), None)
+    return _MISSING if track is None else track_value(track, name)
+
+
+def _follow(section: intent.SectionOp, made: intent.SectionOp, rest: str, edit: Edit) -> None:
+    """Give a section made from `section` what an edit just gave `section`."""
+    if rest.startswith("harmony"):
+        # Chords are numerals of the key, so they hold in a transposed copy too
+        source, target = section.harmony(), made.harmony()
+        for name in ("chords", "durations", "unit"):
+            target.properties[name] = source.properties[name]
+    elif rest == "":
+        if section.tempo is None:
+            made.properties.pop("tempo", None)
+        else:
+            made.properties["tempo"] = section.tempo
+    else:
+        track = next(t for t in made.tracks() if t.track.data == rest)
+        _set_track(track, edit.field, edit.value)
+
+
+def _place(edit: Edit) -> tuple[str, str, str]:
+    """(section, what, field), where any harmony edit is the section's harmony."""
+    name, _, rest = _parse_target(edit.target)
+    return name, "harmony" if rest.startswith("harmony") else rest, edit.field
+
+
 def current_value(module: ModuleOp, edit: Edit) -> tuple[bool, Any]:
     """
     What the source gives at an intent edit's target, before the edit.
@@ -286,6 +340,8 @@ class ApplyIntentEdits(ModulePass):
 
     def apply(self, ctx: Context, op: ModuleOp) -> None:
         piece = _piece(op)
+        intent_edits = [e for e in self.edits if e.level == "intent"]
+        edited = {_place(e) for e in intent_edits if not e.target.startswith(("motif/", "rack/"))}
         for edit in self.edits:
             if edit.level != "intent":
                 continue
@@ -319,6 +375,17 @@ class ApplyIntentEdits(ModulePass):
                 continue
             name, _, rest = _parse_target(edit.target)
             section = _intent_section(piece, name)
+            # An edit means what the same change to the source would: the sections
+            # made from this one follow it, unless they differ there already or
+            # have an edit of their own.
+            before = _setting(section, rest, edit.field)
+            followers = [
+                made
+                for made in derived_sections(piece, name)
+                if _place(Edit("intent", f"{made.section.data}/{rest}", edit.field, None))
+                not in edited
+                and _setting(made, rest, edit.field) == before
+            ]
             if rest.startswith("harmony@"):
                 index = chord_starts(section, piece.meter.data)[rest.removeprefix("harmony@")]
                 harmony = section.harmony()
@@ -339,6 +406,10 @@ class ApplyIntentEdits(ModulePass):
             else:
                 track = next(t for t in section.tracks() if t.track.data == rest)
                 _set_track(track, edit.field, edit.value)
+            for made in followers:
+                _follow(section, made, rest, edit)
+            if followers:
+                self.report.followed[edit.key] = [m.section.data for m in followers]
             self.report.applied.append(edit.key)
 
 
